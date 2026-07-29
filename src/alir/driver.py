@@ -10,19 +10,31 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
-from alir import db, questions, registry, resume
+from alir import db, questions, registry, resume, usage
 from alir.registry import Issue
+
+BACKOFF_INITIAL = 60.0
+BACKOFF_FACTOR = 2.0
+BACKOFF_MAX = 3600.0
+
+_RATE_LIMIT_RE = re.compile(r"rate.?limit|usage limit|limit reached", re.IGNORECASE)
 
 
 class DriverError(Exception):
     """worktree の用意や claude の起動に関する失敗。"""
+
+
+class RateLimited(DriverError):
+    """レート制限に当たった。Issue は queued に戻されている。"""
 
 
 @dataclass(frozen=True)
@@ -30,6 +42,8 @@ class RunResult:
     exit_code: int
     session_id: str | None
     output: str
+    usage: dict[str, Any] = field(default_factory=dict)
+    rate_limited: bool = False
 
 
 Runner = Callable[..., RunResult]
@@ -127,15 +141,25 @@ def run_claude(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = 
     env = dict(os.environ, ALIR_DATA_DIR=str(dbdir))
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env, check=False)
     session_id: str | None = None
+    run_usage: dict[str, Any] = {}
     is_error = proc.returncode != 0
     try:
         data = json.loads(proc.stdout)
         session_id = data.get("session_id")
+        run_usage = data.get("usage") or {}
         is_error = is_error or bool(data.get("is_error", False))
     except ValueError:
         pass
+    output = proc.stdout or proc.stderr
     exit_code = proc.returncode if proc.returncode != 0 else (1 if is_error else 0)
-    return RunResult(exit_code=exit_code, session_id=session_id, output=proc.stdout or proc.stderr)
+    rate_limited = is_error and _RATE_LIMIT_RE.search(output) is not None
+    return RunResult(
+        exit_code=exit_code,
+        session_id=session_id,
+        output=output,
+        usage=run_usage,
+        rate_limited=rate_limited,
+    )
 
 
 def process_issue(
@@ -164,6 +188,16 @@ def process_issue(
         raise
 
     conn = db.connect(dbdir)
+    if result.usage:
+        usage.record_run(
+            conn, issue_ref=issue.ref, session_id=result.session_id, usage=result.usage
+        )
+    if result.rate_limited:
+        registry.set_status(
+            conn, iid, registry.STATUS_QUEUED, session_id=result.session_id, branch=branch
+        )
+        raise RateLimited(f"issue #{iid} hit a rate limit; requeued")
+
     has_open_question = any(
         q.issue == issue.ref for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
     )
@@ -186,13 +220,17 @@ def run_loop(
     worktree: WorktreeSetup = setup_worktree,
     skip_permissions: bool = False,
     question_timeout: timedelta = timedelta(hours=12),
+    budget: usage.Budget | None = None,
     log: Callable[[str], None] = print,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
     各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
-    Issue を queued に戻す。
+    Issue を queued に戻す。予算の閾値超過とレート制限時のバックオフ中は
+    新規 Issue を開始しない(実行中のものは完了まで走らせる)。
     """
+    backoff = BACKOFF_INITIAL
+    backoff_until = 0.0
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:
@@ -202,7 +240,12 @@ def run_loop(
             for requeued in resume.requeue_answered(conn):
                 log(f"requeue #{requeued.id} {requeued.ref}")
 
-            while len(active) < parallel:
+            paused = usage.pause_reason(conn, budget) if budget is not None else None
+            if paused:
+                log(f"pause: {paused}")
+            in_backoff = time.monotonic() < backoff_until
+
+            while not paused and not in_backoff and len(active) < parallel:
                 conn = db.connect(dbdir)
                 issue = registry.next_queued(conn)
                 if issue is None:
@@ -233,5 +276,10 @@ def run_loop(
                 try:
                     finished = future.result()
                     log(f"finish #{finished.id} {finished.ref}: {finished.status}")
+                    backoff = BACKOFF_INITIAL
+                except RateLimited as exc:
+                    log(f"rate limited #{iid}: {exc}; backoff {int(backoff)}s")
+                    backoff_until = time.monotonic() + backoff
+                    backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
                 except Exception as exc:  # noqa: BLE001
                     log(f"error #{iid}: {exc}")

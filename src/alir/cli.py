@@ -160,18 +160,47 @@ def issues_import(label: str, workdir: Path, priority: int) -> None:
     type=float,
     help="proceed_with_recommended の質問を期限切れにするまでの時間",
 )
+@click.option(
+    "--session-budget",
+    type=int,
+    default=None,
+    help="5 時間ウィンドウのトークン予算(未指定なら判定しない)",
+)
+@click.option(
+    "--weekly-budget",
+    type=int,
+    default=None,
+    help="週次ウィンドウのトークン予算(未指定なら判定しない)",
+)
+@click.option(
+    "--budget-threshold",
+    default=0.8,
+    show_default=True,
+    type=float,
+    help="予算のこの割合を超えたら新規実行を止める",
+)
 def run_cmd(
     once: bool,
     parallel: int,
     interval: float,
     skip_permissions: bool,
     question_timeout_hours: float,
+    session_budget: int | None,
+    weekly_budget: int | None,
+    budget_threshold: float,
 ) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
     from datetime import timedelta
 
-    from alir import driver
+    from alir import driver, usage
 
+    budget = None
+    if session_budget is not None or weekly_budget is not None:
+        budget = usage.Budget(
+            session_tokens=session_budget,
+            weekly_tokens=weekly_budget,
+            threshold=budget_threshold,
+        )
     driver.run_loop(
         data_dir(),
         once=once,
@@ -179,6 +208,7 @@ def run_cmd(
         interval=interval,
         skip_permissions=skip_permissions,
         question_timeout=timedelta(hours=question_timeout_hours),
+        budget=budget,
     )
 
 

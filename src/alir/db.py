@@ -24,6 +24,18 @@ CREATE TABLE questions (
     answered_at TEXT
 )
 """,
+    "runs": """
+CREATE TABLE runs (
+    id INTEGER PRIMARY KEY,
+    issue TEXT NOT NULL,
+    session_id TEXT,
+    input_tokens INTEGER NOT NULL,
+    cache_creation_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+)
+""",
     "issues": """
 CREATE TABLE issues (
     id INTEGER PRIMARY KEY,
