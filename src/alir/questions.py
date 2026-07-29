@@ -162,6 +162,25 @@ def resolve_choice(question: Question, choice: str) -> str:
     return choice
 
 
+def expire(conn: iceql.Connection, qid: int) -> Question:
+    """質問を期限切れにする。
+
+    timeout_action が proceed_with_recommended なら推奨案を回答として記録する。
+    keep_parked の質問には使えない(open のまま人間の回答を待ち続ける)。
+    """
+    q = get(conn, qid)
+    if q.status != STATUS_OPEN:
+        raise QuestionError(f"question {qid} is already {q.status}")
+    if q.timeout_action != "proceed_with_recommended":
+        raise QuestionError(f"question {qid} must be kept parked until answered")
+    conn.execute(
+        "UPDATE questions SET status = ?, answer = ?, answer_note = ?, answered_at = ? "
+        "WHERE id = ?",
+        (STATUS_EXPIRED, q.recommended, "timeout: proceeded with recommended", _now(), qid),
+    )
+    return get(conn, qid)
+
+
 def answer(conn: iceql.Connection, qid: int, choice: str, *, note: str | None = None) -> Question:
     """質問に回答する。choice は選択肢番号(1 始まり)または自由記述。"""
     q = get(conn, qid)

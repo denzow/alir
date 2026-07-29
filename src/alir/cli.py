@@ -153,8 +153,23 @@ def issues_import(label: str, workdir: Path, priority: int) -> None:
     is_flag=True,
     help="claude に --dangerously-skip-permissions を渡す",
 )
-def run_cmd(once: bool, parallel: int, interval: float, skip_permissions: bool) -> None:
+@click.option(
+    "--question-timeout-hours",
+    default=12.0,
+    show_default=True,
+    type=float,
+    help="proceed_with_recommended の質問を期限切れにするまでの時間",
+)
+def run_cmd(
+    once: bool,
+    parallel: int,
+    interval: float,
+    skip_permissions: bool,
+    question_timeout_hours: float,
+) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
+    from datetime import timedelta
+
     from alir import driver
 
     driver.run_loop(
@@ -163,6 +178,7 @@ def run_cmd(once: bool, parallel: int, interval: float, skip_permissions: bool) 
         parallel=parallel,
         interval=interval,
         skip_permissions=skip_permissions,
+        question_timeout=timedelta(hours=question_timeout_hours),
     )
 
 

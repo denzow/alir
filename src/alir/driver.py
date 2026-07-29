@@ -14,9 +14,10 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
-from alir import db, questions, registry
+from alir import db, questions, registry, resume
 from alir.registry import Issue
 
 
@@ -153,8 +154,8 @@ def process_issue(
         path, branch = worktree(issue)
         answered = [
             q
-            for q in questions.list_questions(conn, status=questions.STATUS_ANSWERED)
-            if q.issue == issue.ref
+            for q in questions.list_questions(conn, status=None)
+            if q.issue == issue.ref and q.answer is not None
         ]
         prompt = build_prompt(issue, branch, answers=answered)
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
@@ -184,12 +185,23 @@ def run_loop(
     runner: Runner = run_claude,
     worktree: WorktreeSetup = setup_worktree,
     skip_permissions: bool = False,
+    question_timeout: timedelta = timedelta(hours=12),
     log: Callable[[str], None] = print,
 ) -> None:
-    """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。"""
+    """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
+
+    各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
+    Issue を queued に戻す。
+    """
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:
+            conn = db.connect(dbdir)
+            for q in resume.expire_timeouts(conn, timeout=question_timeout):
+                log(f"question #{q.id} expired: proceeding with recommended")
+            for requeued in resume.requeue_answered(conn):
+                log(f"requeue #{requeued.id} {requeued.ref}")
+
             while len(active) < parallel:
                 conn = db.connect(dbdir)
                 issue = registry.next_queued(conn)
