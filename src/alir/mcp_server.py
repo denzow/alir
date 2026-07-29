@@ -10,7 +10,7 @@ from typing import Any
 
 import iceql
 
-from alir import db, questions
+from alir import db, notify, questions
 
 
 def ask_human_tool(
@@ -35,6 +35,7 @@ def ask_human_tool(
         timeout_action=timeout_action,
         session_id=session_id,
     )
+    notify.notify_question(q)
     return {
         "question_id": q.id,
         "status": q.status,
