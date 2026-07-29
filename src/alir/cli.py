@@ -65,3 +65,15 @@ def mcp_cmd() -> None:
     from alir.mcp_server import create_server
 
     create_server(data_dir()).run()
+
+
+@main.command("web")
+@click.option("--host", default="0.0.0.0", show_default=True, help="バインドするホスト")
+@click.option("--port", default=8710, show_default=True, type=int, help="ポート")
+def web_cmd(host: str, port: int) -> None:
+    """回答用の Web UI を起動する(LAN 内のスマホからのアクセスを想定)。"""
+    import uvicorn
+
+    from alir.web import create_app
+
+    uvicorn.run(create_app(data_dir()), host=host, port=port)
