@@ -6,7 +6,8 @@ from pathlib import Path
 
 import iceql
 
-_QUESTIONS_DDL = """
+_DDLS = {
+    "questions": """
 CREATE TABLE questions (
     id INTEGER PRIMARY KEY,
     issue TEXT NOT NULL,
@@ -22,16 +23,33 @@ CREATE TABLE questions (
     created_at TEXT NOT NULL,
     answered_at TEXT
 )
-"""
+""",
+    "issues": """
+CREATE TABLE issues (
+    id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    workdir TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    session_id TEXT,
+    branch TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+""",
+}
 
 
 def connect(dbdir: Path) -> iceql.Connection:
-    """データディレクトリに接続する。未初期化ならスキーマを作る。
+    """データディレクトリに接続する。未初期化のテーブルがあれば作る。
 
     テーブルの有無は iceql のストレージ規約(テーブルごとの schema.yaml)で判定する。
     """
     dbdir.mkdir(parents=True, exist_ok=True)
     conn = iceql.connect(dbdir)
-    if not (dbdir / "questions.schema.yaml").exists():
-        conn.execute(_QUESTIONS_DDL)
+    for table, ddl in _DDLS.items():
+        if not (dbdir / f"{table}.schema.yaml").exists():
+            conn.execute(ddl)
     return conn

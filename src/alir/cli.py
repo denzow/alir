@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 import alir
-from alir import db, questions
+from alir import db, questions, registry
 from alir.config import data_dir
 from alir.questions import Question, QuestionError
+from alir.registry import RegistryError
 
 
 @click.group()
@@ -65,6 +68,102 @@ def mcp_cmd() -> None:
     from alir.mcp_server import create_server
 
     create_server(data_dir()).run()
+
+
+@main.group("issues", invoke_without_command=True)
+@click.pass_context
+def issues_group(ctx: click.Context) -> None:
+    """Issue レジストリを操作する。サブコマンドなしなら一覧する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        items = registry.list_issues(conn)
+        if not items:
+            click.echo("no issues")
+            return
+        for issue in items:
+            click.echo(
+                f"#{issue.id} [{issue.status}] {issue.ref} "
+                f"(priority: {issue.priority}) {issue.workdir}"
+            )
+
+
+@issues_group.command("add")
+@click.argument("url")
+@click.option(
+    "--workdir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="対象リポジトリのローカルパス",
+)
+@click.option("--priority", default=0, show_default=True, type=int, help="大きいほど先に実行する")
+def issues_add(url: str, workdir: Path, priority: int) -> None:
+    """GitHub Issue の URL を queued として登録する。"""
+    conn = db.connect(data_dir())
+    try:
+        issue = registry.add(conn, url=url, workdir=str(workdir.resolve()), priority=priority)
+    except RegistryError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"added #{issue.id}: {issue.ref} (priority: {issue.priority})")
+
+
+@issues_group.command("import")
+@click.option("--label", required=True, help="取り込む Issue のラベル")
+@click.option(
+    "--workdir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="対象リポジトリのローカルパス",
+)
+@click.option("--priority", default=0, show_default=True, type=int)
+def issues_import(label: str, workdir: Path, priority: int) -> None:
+    """gh CLI でラベル付き Issue を検索して一括登録する(補助コマンド)。"""
+    import subprocess
+
+    proc = subprocess.run(
+        ["gh", "issue", "list", "--label", label, "--json", "url", "--limit", "100"],
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise click.ClickException(f"gh issue list failed: {proc.stderr.strip()}")
+    import json
+
+    conn = db.connect(data_dir())
+    for item in json.loads(proc.stdout):
+        try:
+            issue = registry.add(
+                conn, url=item["url"], workdir=str(workdir.resolve()), priority=priority
+            )
+            click.echo(f"added #{issue.id}: {issue.ref}")
+        except RegistryError as exc:
+            click.echo(f"skipped: {exc}")
+
+
+@main.command("run")
+@click.option("--once", is_flag=True, help="キューを 1 巡したら終了する")
+@click.option("--parallel", default=1, show_default=True, type=int, help="並列実行数")
+@click.option(
+    "--interval", default=30.0, show_default=True, type=float, help="キューが空のときの待機秒数"
+)
+@click.option(
+    "--dangerously-skip-permissions",
+    "skip_permissions",
+    is_flag=True,
+    help="claude に --dangerously-skip-permissions を渡す",
+)
+def run_cmd(once: bool, parallel: int, interval: float, skip_permissions: bool) -> None:
+    """ループドライバを起動し、queued の Issue を処理し続ける。"""
+    from alir import driver
+
+    driver.run_loop(
+        data_dir(),
+        once=once,
+        parallel=parallel,
+        interval=interval,
+        skip_permissions=skip_permissions,
+    )
 
 
 @main.command("web")
