@@ -3,6 +3,7 @@
 [日本語版 README](README_ja.md)
 
 An asynchronous decision service for autonomous Claude Code loops.
+The name is short for **A**gent **L**oop for **I**ssue **R**esolution.
 
 When Claude Code needs a human decision during autonomous work, alir lets it register a question and move on without blocking the loop.
 Questions are stored in an [iceql](https://github.com/denzow/iceql) database (CSV + YAML), and humans answer them asynchronously via CLI or Web UI.

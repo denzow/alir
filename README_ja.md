@@ -3,6 +3,7 @@
 [English README](README.md)
 
 Claude Code の自律ループを支える非同期判断サービス。
+名前は **A**gent **L**oop for **I**ssue **R**esolution の略。
 
 Claude Code が作業中に人間の判断が必要になったとき、質問を登録してループを止めずに先へ進むための仕組みを提供する。
 質問は [iceql](https://github.com/denzow/iceql) のデータベース（CSV + YAML）に蓄積され、人間は CLI や Web UI から非同期に回答する。
