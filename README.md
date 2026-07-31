@@ -18,21 +18,19 @@ $ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo 
 $ alir issues                       # list
 $ alir issues import --label agent-ready --workdir ~/work/repo   # bulk import by label (helper)
 
-# Start the loop driver
-$ alir run --parallel 1 --session-budget 4000000 --weekly-budget 20000000
+# Start everything in one process: loop driver + Web UI + MCP (HTTP)
+$ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 
 # List unanswered questions
 $ alir questions
 
 # Answer a question (option number or free text)
 $ alir answer 1 2 "Go with B, but write the tests first"
-
-# Start the answering Web UI (accessible from phones on your LAN)
-$ alir web --port 8710
-
-# Run as an MCP server (Claude Code calls ask_human through this)
-$ alir mcp
 ```
+
+`alir serve` is the recommended way to run alir.
+Claude sessions started by the driver connect to the MCP endpoint at `http://127.0.0.1:PORT/mcp` instead of spawning a subprocess per session.
+Each piece is also available standalone: `alir run` (driver only), `alir web` (Web UI only), and `alir mcp` (stdio MCP server for manual Claude Code sessions).
 
 The data directory is specified with the `ALIR_DATA_DIR` environment variable.
 If unset, `$XDG_DATA_HOME/alir` (default `~/.local/share/alir`) is used.

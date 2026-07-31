@@ -117,13 +117,16 @@ async def answer_question(request: Request) -> RedirectResponse:
     return RedirectResponse("/", status_code=303)
 
 
+def app_routes() -> list[Route]:
+    """Web UI のルート定義を返す。単体起動でも MCP との同居でも同じものを使う。"""
+    return [
+        Route("/", index, methods=["GET"]),
+        Route("/questions/{qid:int}/answer", answer_question, methods=["POST"]),
+    ]
+
+
 def create_app(dbdir: Path) -> Starlette:
     """回答用 Web UI の ASGI アプリケーションを返す。"""
-    app = Starlette(
-        routes=[
-            Route("/", index, methods=["GET"]),
-            Route("/questions/{qid:int}/answer", answer_question, methods=["POST"]),
-        ]
-    )
+    app = Starlette(routes=app_routes())
     app.state.dbdir = dbdir
     return app

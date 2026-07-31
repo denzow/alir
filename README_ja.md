@@ -18,21 +18,19 @@ $ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo 
 $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
 
-# ループドライバを起動する
-$ alir run --parallel 1 --session-budget 4000000 --weekly-budget 20000000
+# ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
+$ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 
 # 未回答の質問を一覧する
 $ alir questions
 
 # 質問に回答する（選択肢番号または自由記述）
 $ alir answer 1 2 "B案で。ただしテストを先に"
-
-# 回答用の Web UI を起動する（LAN 内のスマホから回答できる）
-$ alir web --port 8710
-
-# MCP サーバーとして起動する（Claude Code から ask_human を呼ぶ）
-$ alir mcp
 ```
+
+推奨は `alir serve` での起動。
+ドライバが起動する claude セッションは、セッションごとにサブプロセスを立てる代わりに `http://127.0.0.1:PORT/mcp` の MCP エンドポイントへ接続する。
+個別起動も可能で、`alir run`（ドライバのみ）、`alir web`（Web UI のみ）、`alir mcp`（手動セッション用の stdio MCP サーバー）が使える。
 
 データディレクトリは環境変数 `ALIR_DATA_DIR` で指定する。
 未指定なら `$XDG_DATA_HOME/alir`（既定は `~/.local/share/alir`）を使う。

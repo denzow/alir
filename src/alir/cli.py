@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import click
 
 import alir
-from alir import db, questions, registry
+from alir import db, questions, registry, usage
 from alir.config import data_dir
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
@@ -141,44 +142,68 @@ def issues_import(label: str, workdir: Path, priority: int) -> None:
             click.echo(f"skipped: {exc}")
 
 
+def _run_options(f: Callable[..., None]) -> Callable[..., None]:
+    """run と serve で共通のループドライバ用オプション。"""
+    options = [
+        click.option("--parallel", default=1, show_default=True, type=int, help="並列実行数"),
+        click.option(
+            "--interval",
+            default=30.0,
+            show_default=True,
+            type=float,
+            help="キューが空のときの待機秒数",
+        ),
+        click.option(
+            "--dangerously-skip-permissions",
+            "skip_permissions",
+            is_flag=True,
+            help="claude に --dangerously-skip-permissions を渡す",
+        ),
+        click.option(
+            "--question-timeout-hours",
+            default=12.0,
+            show_default=True,
+            type=float,
+            help="proceed_with_recommended の質問を期限切れにするまでの時間",
+        ),
+        click.option(
+            "--session-budget",
+            type=int,
+            default=None,
+            help="5 時間ウィンドウのトークン予算(未指定なら判定しない)",
+        ),
+        click.option(
+            "--weekly-budget",
+            type=int,
+            default=None,
+            help="週次ウィンドウのトークン予算(未指定なら判定しない)",
+        ),
+        click.option(
+            "--budget-threshold",
+            default=0.8,
+            show_default=True,
+            type=float,
+            help="予算のこの割合を超えたら新規実行を止める",
+        ),
+    ]
+    for option in reversed(options):
+        f = option(f)
+    return f
+
+
+def _build_budget(
+    session_budget: int | None, weekly_budget: int | None, threshold: float
+) -> usage.Budget | None:
+    if session_budget is None and weekly_budget is None:
+        return None
+    return usage.Budget(
+        session_tokens=session_budget, weekly_tokens=weekly_budget, threshold=threshold
+    )
+
+
 @main.command("run")
 @click.option("--once", is_flag=True, help="キューを 1 巡したら終了する")
-@click.option("--parallel", default=1, show_default=True, type=int, help="並列実行数")
-@click.option(
-    "--interval", default=30.0, show_default=True, type=float, help="キューが空のときの待機秒数"
-)
-@click.option(
-    "--dangerously-skip-permissions",
-    "skip_permissions",
-    is_flag=True,
-    help="claude に --dangerously-skip-permissions を渡す",
-)
-@click.option(
-    "--question-timeout-hours",
-    default=12.0,
-    show_default=True,
-    type=float,
-    help="proceed_with_recommended の質問を期限切れにするまでの時間",
-)
-@click.option(
-    "--session-budget",
-    type=int,
-    default=None,
-    help="5 時間ウィンドウのトークン予算(未指定なら判定しない)",
-)
-@click.option(
-    "--weekly-budget",
-    type=int,
-    default=None,
-    help="週次ウィンドウのトークン予算(未指定なら判定しない)",
-)
-@click.option(
-    "--budget-threshold",
-    default=0.8,
-    show_default=True,
-    type=float,
-    help="予算のこの割合を超えたら新規実行を止める",
-)
+@_run_options
 def run_cmd(
     once: bool,
     parallel: int,
@@ -192,15 +217,8 @@ def run_cmd(
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
     from datetime import timedelta
 
-    from alir import driver, usage
+    from alir import driver
 
-    budget = None
-    if session_budget is not None or weekly_budget is not None:
-        budget = usage.Budget(
-            session_tokens=session_budget,
-            weekly_tokens=weekly_budget,
-            threshold=budget_threshold,
-        )
     driver.run_loop(
         data_dir(),
         once=once,
@@ -208,8 +226,57 @@ def run_cmd(
         interval=interval,
         skip_permissions=skip_permissions,
         question_timeout=timedelta(hours=question_timeout_hours),
-        budget=budget,
+        budget=_build_budget(session_budget, weekly_budget, budget_threshold),
     )
+
+
+@main.command("serve")
+@click.option("--host", default="0.0.0.0", show_default=True, help="バインドするホスト")
+@click.option("--port", default=8710, show_default=True, type=int, help="ポート")
+@_run_options
+def serve_cmd(
+    host: str,
+    port: int,
+    parallel: int,
+    interval: float,
+    skip_permissions: bool,
+    question_timeout_hours: float,
+    session_budget: int | None,
+    weekly_budget: int | None,
+    budget_threshold: float,
+) -> None:
+    """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
+
+    MCP は http://127.0.0.1:PORT/mcp で提供され、ドライバが起動する
+    claude セッションはサブプロセスを立てずにここへ接続する。
+    """
+    import functools
+    import threading
+    from datetime import timedelta
+
+    import uvicorn
+
+    from alir import driver
+    from alir.serve import create_combined_app
+
+    dbdir = data_dir()
+    app = create_combined_app(dbdir)
+    runner = functools.partial(driver.run_claude, mcp_url=f"http://127.0.0.1:{port}/mcp")
+    thread = threading.Thread(
+        target=driver.run_loop,
+        args=(dbdir,),
+        kwargs={
+            "parallel": parallel,
+            "interval": interval,
+            "skip_permissions": skip_permissions,
+            "question_timeout": timedelta(hours=question_timeout_hours),
+            "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
+            "runner": runner,
+        },
+        daemon=True,
+    )
+    thread.start()
+    uvicorn.run(app, host=host, port=port)
 
 
 @main.command("web")

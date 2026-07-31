@@ -107,23 +107,34 @@ def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]
     return "\n".join(lines)
 
 
-def write_mcp_config(dbdir: Path) -> Path:
-    """ask_human を提供する MCP 設定ファイルを書き、パスを返す。"""
-    config = {
-        "mcpServers": {
-            "alir": {
-                "command": "alir",
-                "args": ["mcp"],
-                "env": {"ALIR_DATA_DIR": str(dbdir)},
-            }
+def write_mcp_config(dbdir: Path, *, mcp_url: str | None = None) -> Path:
+    """ask_human を提供する MCP 設定ファイルを書き、パスを返す。
+
+    mcp_url があれば HTTP(alir serve への接続)、なければ stdio(alir mcp の起動)。
+    """
+    server_config: dict[str, Any]
+    if mcp_url:
+        server_config = {"type": "http", "url": mcp_url}
+    else:
+        server_config = {
+            "command": "alir",
+            "args": ["mcp"],
+            "env": {"ALIR_DATA_DIR": str(dbdir)},
         }
-    }
+    config = {"mcpServers": {"alir": server_config}}
     path = dbdir / "mcp.json"
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
-def run_claude(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+def run_claude(
+    *,
+    prompt: str,
+    cwd: Path,
+    dbdir: Path,
+    skip_permissions: bool = False,
+    mcp_url: str | None = None,
+) -> RunResult:
     """claude -p を 1 回実行し、結果 JSON から session_id と成否を取り出す。"""
     cmd = [
         "claude",
@@ -132,7 +143,7 @@ def run_claude(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = 
         "--output-format",
         "json",
         "--mcp-config",
-        str(write_mcp_config(dbdir)),
+        str(write_mcp_config(dbdir, mcp_url=mcp_url)),
         "--allowedTools",
         "mcp__alir__ask_human",
     ]
