@@ -90,16 +90,20 @@ def _render_page(items: list[Question], *, show_all: bool, error: str | None) ->
 
 
 async def index(request: Request) -> HTMLResponse:
-    conn = db.connect(request.app.state.dbdir)
+    dbdir = request.app.state.dbdir
     show_all = request.query_params.get("all") == "1"
     status = None if show_all else questions.STATUS_OPEN
-    items = questions.list_questions(conn, status=status)
+
+    def work() -> list[Question]:
+        return questions.list_questions(db.connect(dbdir), status=status)
+
+    items = await db.run_locked(work)
     error = request.query_params.get("error")
     return HTMLResponse(_render_page(items, show_all=show_all, error=error))
 
 
 async def answer_question(request: Request) -> RedirectResponse:
-    conn = db.connect(request.app.state.dbdir)
+    dbdir = request.app.state.dbdir
     qid = int(request.path_params["qid"])
     form = await request.form()
     choice = str(form.get("choice") or "").strip()
@@ -108,8 +112,12 @@ async def answer_question(request: Request) -> RedirectResponse:
     note = str(form.get("note") or "").strip() or None
     if not choice:
         return RedirectResponse("/?error=choice+is+empty", status_code=303)
+
+    def work() -> None:
+        questions.answer(db.connect(dbdir), qid, choice, note=note)
+
     try:
-        questions.answer(conn, qid, choice, note=note)
+        await db.run_locked(work)
     except QuestionError as exc:
         from urllib.parse import quote
 
