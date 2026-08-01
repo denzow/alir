@@ -182,13 +182,6 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
             type=float,
             help="予算のこの割合を超えたら新規実行を止める",
         ),
-        click.option(
-            "--rate-limits-file",
-            type=click.Path(path_type=Path),
-            default=Path("~/.claude/usage-monitor/latest.json"),
-            show_default=True,
-            help="statusline が保存する公式レート制限 JSON のパス(なければ無視)",
-        ),
     ]
     for option in reversed(options):
         f = option(f)
@@ -217,7 +210,6 @@ def run_cmd(
     session_budget: int | None,
     weekly_budget: int | None,
     budget_threshold: float,
-    rate_limits_file: Path,
 ) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
     from datetime import timedelta
@@ -232,7 +224,6 @@ def run_cmd(
         skip_permissions=skip_permissions,
         question_timeout=timedelta(hours=question_timeout_hours),
         budget=_build_budget(session_budget, weekly_budget, budget_threshold),
-        rate_limits_path=rate_limits_file,
     )
 
 
@@ -250,7 +241,6 @@ def serve_cmd(
     session_budget: int | None,
     weekly_budget: int | None,
     budget_threshold: float,
-    rate_limits_file: Path,
 ) -> None:
     """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
 
@@ -278,7 +268,6 @@ def serve_cmd(
             "skip_permissions": skip_permissions,
             "question_timeout": timedelta(hours=question_timeout_hours),
             "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
-            "rate_limits_path": rate_limits_file,
             "runner": runner,
         },
         daemon=True,

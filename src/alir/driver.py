@@ -315,7 +315,6 @@ def run_loop(
     skip_permissions: bool = False,
     question_timeout: timedelta = timedelta(hours=12),
     budget: usage.Budget | None = None,
-    rate_limits_path: Path | None = None,
     log: Callable[[str], None] = print,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
@@ -354,16 +353,13 @@ def run_loop(
             for requeued in resume.requeue_answered(conn):
                 emit(f"requeue #{requeued.id} {requeued.ref}")
 
-            paused: str | None = None
+            paused: str | None
             if control.is_paused(conn):
                 paused = "paused manually"
-            if paused is None and rate_limits_path is not None:
-                threshold = budget.threshold if budget is not None else usage.DEFAULT_THRESHOLD
-                status_now = usage.read_rate_limits(rate_limits_path)
-                if status_now is not None:
-                    paused = usage.rate_limit_pause_reason(status_now, threshold=threshold)
-            if paused is None and budget is not None:
+            elif budget is not None:
                 paused = usage.pause_reason(conn, budget)
+            else:
+                paused = None
             if paused != last_pause_reason:
                 emit(f"pause: {paused}" if paused else "resume")
                 last_pause_reason = paused

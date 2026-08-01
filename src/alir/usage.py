@@ -1,17 +1,14 @@
-"""稼働管理: レート制限使用率の参照とトークン予算の判定。
+"""稼働管理: トークン消費の記録とウィンドウ予算の判定。
 
-判定の主軸は、Claude Code が statusline に渡す公式のレート制限使用率
-(statusline スクリプトが JSON ファイルとして保存したもの)を読む方式。
-補助として、セッションごとの消費を runs テーブルに記録し、
-設定したトークン予算の閾値超過でも新規実行を止められる。
+セッションごとの消費を runs テーブルに記録し、
+5 時間ウィンドウと週次ウィンドウの消費が予算の閾値を超えたら新規実行を止める。
+予算はサーバー側の残枠を取れないため設定値であり、limit 到達時の実測で見直す。
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import iceql
@@ -21,11 +18,6 @@ from alir import db
 WINDOW_SESSION = timedelta(hours=5)
 WINDOW_WEEKLY = timedelta(days=7)
 
-DEFAULT_THRESHOLD = 0.8
-
-# Claude Code の statusline スクリプトが保存するレート制限 JSON の既定パス
-DEFAULT_RATE_LIMITS_PATH = Path("~/.claude/usage-monitor/latest.json")
-
 
 @dataclass(frozen=True)
 class Budget:
@@ -33,62 +25,7 @@ class Budget:
 
     session_tokens: int | None = None
     weekly_tokens: int | None = None
-    threshold: float = DEFAULT_THRESHOLD
-
-
-@dataclass(frozen=True)
-class RateLimitWindow:
-    used_percentage: float
-    resets_at: datetime | None
-
-
-@dataclass(frozen=True)
-class RateLimitStatus:
-    five_hour: RateLimitWindow | None
-    seven_day: RateLimitWindow | None
-
-
-def read_rate_limits(path: Path, *, now: datetime | None = None) -> RateLimitStatus | None:
-    """statusline が保存した公式のレート制限使用率を読む。
-
-    ファイルは対話セッションの応答時にしか更新されないため、
-    リセット時刻を過ぎたウィンドウの読み値は捨てる(古い値で止めない)。
-    読めない・値がないときは None。
-    """
-    try:
-        data = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    limits = data.get("rate_limits") or {}
-    current = now or datetime.now(timezone.utc)
-
-    def window(raw: Any) -> RateLimitWindow | None:
-        if not isinstance(raw, dict) or raw.get("used_percentage") is None:
-            return None
-        resets_raw = raw.get("resets_at")
-        resets = (
-            datetime.fromtimestamp(resets_raw, tz=timezone.utc)
-            if isinstance(resets_raw, int | float)
-            else None
-        )
-        if resets is not None and current >= resets:
-            return None
-        return RateLimitWindow(used_percentage=float(raw["used_percentage"]), resets_at=resets)
-
-    five_hour = window(limits.get("five_hour"))
-    seven_day = window(limits.get("seven_day"))
-    if five_hour is None and seven_day is None:
-        return None
-    return RateLimitStatus(five_hour=five_hour, seven_day=seven_day)
-
-
-def rate_limit_pause_reason(status: RateLimitStatus, *, threshold: float) -> str | None:
-    """公式の使用率が閾値を超えているウィンドウがあれば理由を返す。"""
-    checks = (("5h window", status.five_hour), ("weekly window", status.seven_day))
-    for label, window in checks:
-        if window is not None and window.used_percentage >= threshold * 100:
-            return f"{label}: {window.used_percentage:.0f}% used (official rate limit)"
-    return None
+    threshold: float = 0.8
 
 
 def _now() -> datetime:
