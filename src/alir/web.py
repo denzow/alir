@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, questions, registry
+from alir import control, db, questions, registry, reports
 from alir.questions import Question, QuestionError
 from alir.registry import Issue, RegistryError
 
@@ -89,13 +89,17 @@ async def answer_question(request: Request, qid: int) -> Response:
 @router.get("/issues")
 async def issues_index(request: Request) -> Response:
     dbdir = request.app.state.dbdir
-    items = await db.run_in_thread(lambda: _list_issues(dbdir))
-    workdirs = await db.run_in_thread(lambda: registry.list_workdirs(db.connect(dbdir)))
-    context = {
-        "items": items,
-        "workdirs": workdirs,
-        "error": request.query_params.get("error"),
-    }
+
+    def work() -> dict[str, Any]:
+        conn = db.connect(dbdir)
+        return {
+            "items": registry.list_issues(conn),
+            "workdirs": registry.list_workdirs(conn),
+            "reports": reports.latest_by_issue(conn),
+        }
+
+    context = await db.run_in_thread(work)
+    context["error"] = request.query_params.get("error")
     return _render(request, "issues.html", context)
 
 
@@ -161,8 +165,16 @@ async def issues_requeue(request: Request, iid: int) -> Response:
 async def _issues_result(request: Request, dbdir: Path, error: str | None) -> Response:
     """issues への POST の結果を返す。htmx なら一覧断片、通常はリダイレクト。"""
     if _is_htmx(request):
-        items = await db.run_in_thread(lambda: _list_issues(dbdir))
-        context = {"items": items, "error": error}
+
+        def work() -> dict[str, Any]:
+            conn = db.connect(dbdir)
+            return {
+                "items": registry.list_issues(conn),
+                "reports": reports.latest_by_issue(conn),
+            }
+
+        context = await db.run_in_thread(work)
+        context["error"] = error
         return _render(request, "_issue_list.html", context, fragment="_issue_list.html")
     if error:
         return RedirectResponse(f"/issues?error={quote(error)}", 303)

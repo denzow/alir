@@ -269,3 +269,21 @@ def test_loop_page_shows_events(client: TestClient, dbdir: Path) -> None:
     control.log_event(conn, "start #1 denzow/alir#12")
     res = client.get("/loop")
     assert "start #1 denzow/alir#12" in res.text
+
+
+def test_issue_card_shows_latest_report(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry, reports
+
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir=str(tmp_path))
+    reports.add(conn, issue="denzow/alir#12", summary="実装して PR を作成")
+    reports.add(
+        conn,
+        issue="denzow/alir#12",
+        summary="レビュー指摘を反映",
+        pr_url="https://github.com/denzow/alir/pull/5",
+    )
+    res = client.get("/issues")
+    assert "レビュー指摘を反映" in res.text
+    assert "実装して PR を作成" not in res.text
+    assert 'href="https://github.com/denzow/alir/pull/5"' in res.text

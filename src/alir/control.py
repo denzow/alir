@@ -91,5 +91,6 @@ def log_event(conn: iceql.Connection, message: str) -> Event:
 
 def recent_events(conn: iceql.Connection, *, limit: int = 100) -> list[Event]:
     """イベントを新しい順に返す。"""
-    cur = conn.execute("SELECT id, at, message FROM events ORDER BY id DESC LIMIT ?", (limit,))
+    # iceql は LIMIT のプレースホルダに対応していないため整数を直接埋め込む
+    cur = conn.execute(f"SELECT id, at, message FROM events ORDER BY id DESC LIMIT {int(limit)}")
     return [Event(id=int(str(i)), at=str(a), message=str(m)) for i, a, m in cur.fetchall()]

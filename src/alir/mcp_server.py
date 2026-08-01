@@ -10,7 +10,7 @@ from typing import Any
 
 import iceql
 
-from alir import db, notify, questions
+from alir import db, notify, questions, reports
 
 
 def ask_human_tool(
@@ -44,6 +44,19 @@ def ask_human_tool(
             "Do not wait for the answer: summarize the current state and finish this session."
         ),
     }
+
+
+def report_result_tool(
+    conn: iceql.Connection,
+    *,
+    issue: str,
+    summary: str,
+    pr_url: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """実施内容を記録し、登録結果を返す。"""
+    report = reports.add(conn, issue=issue, summary=summary, pr_url=pr_url, session_id=session_id)
+    return {"report_id": report.id, "message": "Recorded."}
 
 
 def create_server(dbdir: str | Path) -> Any:
@@ -92,6 +105,26 @@ def create_server(dbdir: str | Path) -> Any:
             impact=impact,
             timeout_action=timeout_action,
             session_id=session_id,
+        )
+
+    @server.tool()
+    def report_result(
+        issue: str,
+        summary: str,
+        pr_url: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record what you did for an issue. Call this once before finishing a session.
+
+        Args:
+            issue: Target issue as "owner/repo#number".
+            summary: One-line summary of what was done (what changed, or how far
+                you got before parking). Write it for a human scanning a list.
+            pr_url: URL of the pull request, if you opened one.
+            session_id: Claude Code session id, if known.
+        """
+        return report_result_tool(
+            conn, issue=issue, summary=summary, pr_url=pr_url, session_id=session_id
         )
 
     return server

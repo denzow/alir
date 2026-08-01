@@ -20,6 +20,16 @@
   <p class="issue-title">{{ issue.title or issue.ref }}</p>
   <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
   <p class="workdir">{{ issue.workdir }}</p>
+  {% set report = reports.get(issue.ref) if reports else none %}
+  {% if report %}
+  <div class="report">
+    <span class="label">last run {{ report.created_at[5:16] | replace("T", " ") }}</span>
+    <div>{{ report.summary }}</div>
+    {% if report.pr_url %}
+    <a href="{{ report.pr_url }}">{{ report.pr_url | replace("https://github.com/", "") }}</a>
+    {% endif %}
+  </div>
+  {% endif %}
   {% if issue.status == "failed" %}
   <form class="requeue" method="post" action="/issues/{{ issue.id }}/requeue"
         hx-post="/issues/{{ issue.id }}/requeue" hx-target="#issues" hx-swap="innerHTML">

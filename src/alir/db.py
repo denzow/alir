@@ -60,6 +60,16 @@ CREATE TABLE control (
     value TEXT NOT NULL
 )
 """,
+    "reports": """
+CREATE TABLE reports (
+    id INTEGER PRIMARY KEY,
+    issue TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    pr_url TEXT,
+    session_id TEXT,
+    created_at TEXT NOT NULL
+)
+""",
     "issues": """
 CREATE TABLE issues (
     id INTEGER PRIMARY KEY,

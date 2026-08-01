@@ -117,3 +117,11 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     statuses = [i.status for i in registry.list_issues(conn)]
     assert statuses == [registry.STATUS_DONE, registry.STATUS_DONE]
+
+
+def test_prompt_instructs_report_result(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "report_result" in prompt

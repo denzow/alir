@@ -93,11 +93,14 @@ def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]
         "3. テストとリンタが通ることを確認する。",
         f"4. `git push -u origin {branch}` のうえ `gh pr create` で PR を作る。",
         "   PR 本文には「判断ポイント」節を設け、低影響の判断とその理由を記載する。",
+        "5. 終了する前に report_result MCP ツールで実施内容を 1 行で報告する。",
+        f'   issue パラメータには "{issue.ref}"、PR を作成した場合は pr_url も渡す。',
         "",
         "人間の判断が必要になったら ask_human MCP ツールで質問を登録する。",
         f'issue パラメータには "{issue.ref}" を渡す。',
         "質問は不可逆または高影響の判断に限る。低影響の判断は推奨案で進めて PR に記載する。",
-        "質問を登録したら回答を待たず、現状を要約して即座に終了する。",
+        "質問を登録したら回答を待たず、そこまでの実施内容を report_result で報告して"
+        "即座に終了する。",
     ]
     if answers:
         lines += ["", "過去の質問への回答(これを前提に続行する):"]
@@ -146,7 +149,7 @@ def run_claude(
         "--mcp-config",
         str(write_mcp_config(dbdir, mcp_url=mcp_url)),
         "--allowedTools",
-        "mcp__alir__ask_human",
+        "mcp__alir__ask_human,mcp__alir__report_result",
     ]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
