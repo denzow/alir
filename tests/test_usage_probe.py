@@ -71,10 +71,12 @@ def test_run_loop_pauses_when_usage_over_threshold(tmp_path: Path) -> None:
     assert any("official" in line for line in logs)
 
 
-def test_run_loop_stores_usage_and_reprobes_after_finish(tmp_path: Path) -> None:
+def test_run_loop_stores_usage_and_reprobes_before_next_start(tmp_path: Path) -> None:
+    """セッション完了後、次の開始候補があれば使用率を取り直す。"""
     dbdir = tmp_path / "data"
     conn = db.connect(dbdir)
     registry.add(conn, url=URL, workdir="/tmp")
+    registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
 
     calls: list[int] = []
 
@@ -88,14 +90,15 @@ def test_run_loop_stores_usage_and_reprobes_after_finish(tmp_path: Path) -> None
     driver.run_loop(
         dbdir,
         once=True,
+        parallel=1,
         runner=runner,
         worktree=_fake_worktree,
         usage_probe=probe,
         log=lambda _: None,
     )
     conn = db.connect(dbdir)
-    assert registry.list_issues(conn)[0].status == registry.STATUS_DONE
-    # 初回サイクル + セッション完了後の再取得で 2 回以上呼ばれる
+    assert all(i.status == registry.STATUS_DONE for i in registry.list_issues(conn))
+    # 初回 + 1 件目の完了後(2 件目の開始前)で 2 回以上呼ばれる
     assert len(calls) >= 2
     assert control.get_value(conn, control.KEY_USAGE_STATUS) is not None
 
