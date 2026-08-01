@@ -1,16 +1,51 @@
-"""MCP サーバー: Claude Code から質問(ask_human)を登録する。
+"""MCP サーバー: Claude Code から質問(ask_human)や報告を受け付ける。
 
 ツール本体はプレーンな関数に分離し、FastMCP への登録は薄く保つ。
+report_progress は公式の使用率もチェックし、閾値を超えていたら
+セッションに中断を指示する(協調的な稼働中ストップ)。
 """
 
 from __future__ import annotations
 
+import contextlib
+import json
+import time
 from pathlib import Path
 from typing import Any
 
 import iceql
 
-from alir import db, notify, progress, questions, reports
+from alir import control, db, notify, progress, questions, reports, usage
+
+# 使用率チェックのキャッシュ。progress のたびに CLI を起動しないための TTL
+USAGE_CHECK_TTL = 180.0
+_usage_cache: tuple[float, usage.UsageStatus | None] | None = None
+
+# テストから差し替えられるように module 属性にしておく
+usage_probe = usage.fetch_usage_status
+
+
+def _check_usage_stop(conn: iceql.Connection) -> str | None:
+    """使用率が閾値を超えていたら停止理由を返す。判定できないときは None。"""
+    global _usage_cache
+    now = time.monotonic()
+    if _usage_cache is None or now - _usage_cache[0] >= USAGE_CHECK_TTL:
+        status = usage_probe()
+        _usage_cache = (now, status)
+        if status is not None:
+            control.set_value(
+                conn,
+                control.KEY_USAGE_STATUS,
+                json.dumps(
+                    [[w.label, w.used_percentage] for w in status.windows], ensure_ascii=False
+                ),
+            )
+    status = _usage_cache[1]
+    if status is None:
+        return None
+    raw = control.get_value(conn, control.KEY_USAGE_THRESHOLD)
+    threshold = float(raw) if raw else usage.DEFAULT_THRESHOLD
+    return usage.status_pause_reason(status, threshold=threshold)
 
 
 def ask_human_tool(
@@ -53,9 +88,20 @@ def report_progress_tool(
     message: str,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    """進捗を記録し、登録結果を返す。"""
+    """進捗を記録し、登録結果を返す。使用率が閾値を超えていたら中断を指示する。"""
     entry = progress.add(conn, issue=issue, message=message, session_id=session_id)
-    return {"progress_id": entry.id, "message": "Recorded."}
+    result: dict[str, Any] = {"progress_id": entry.id, "message": "Recorded."}
+    reason: str | None = None
+    with contextlib.suppress(Exception):  # 使用率が取れなくても進捗記録は成功させる
+        reason = _check_usage_stop(conn)
+    if reason:
+        result["stop"] = True
+        result["message"] = (
+            f"Recorded. USAGE LIMIT REACHED ({reason}). Stop working now: "
+            'commit what you have, call report_result with outcome="aborted" '
+            "summarizing how far you got, and end this session immediately."
+        )
+    return result
 
 
 def report_result_tool(
@@ -139,6 +185,9 @@ def create_server(dbdir: str | Path) -> Any:
         started implementing, running tests, opening a PR, and so on.
         A human watches these updates live, so keep each message short.
 
+        If the response contains "stop": true, usage limits are nearly
+        exhausted: follow the instruction in the message and end the session.
+
         Args:
             issue: Target issue as "owner/repo#number".
             message: One-line progress update, e.g. "調査完了、実装に着手".
@@ -162,10 +211,11 @@ def create_server(dbdir: str | Path) -> Any:
                 you got before parking). Write it for a human scanning a list.
             pr_url: URL of the pull request, if you opened one.
             session_id: Claude Code session id, if known.
-            outcome: "implemented" if you worked on the implementation, or
+            outcome: "implemented" if you worked on the implementation,
                 "refined" if you only refined the issue (spec, plan, decision
-                points) without implementing. "refined" requeues the issue so
-                the next session implements it.
+                points) without implementing, or "aborted" if you stopped
+                early (e.g. usage limits). "refined" and "aborted" requeue
+                the issue so a later session continues it.
         """
         return report_result_tool(
             conn,

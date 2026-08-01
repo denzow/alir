@@ -351,3 +351,12 @@ def test_prompt_requires_report_even_when_nothing_to_do(dbdir: Path) -> None:
     prompt = runner.prompts[0]  # type: ignore[attr-defined]
     assert "終了前に必ず report_result を 1 回呼ぶ" in prompt
     assert "何もする必要がなかった場合" in prompt
+
+
+def test_prompt_instructs_stop_on_usage(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert '"stop": true' in prompt
+    assert 'outcome="aborted"' in prompt

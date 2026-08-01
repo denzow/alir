@@ -176,6 +176,9 @@ def build_prompt(
         "作業の節目(調査を終えた、実装に入った、テストを回した、PR を作った、など)ごとに、",
         "report_progress MCP ツールで進捗を 1 行報告する。"
         f'issue パラメータには "{issue.ref}" を渡す。',
+        'report_progress の応答に "stop": true が含まれていたら使用量の上限が近い。',
+        "作業を中断して自己完結する範囲でコミットし、どこまで進んだかを",
+        'report_result(outcome="aborted")で報告して直ちに終了する。',
         "",
         "人間の判断が必要になったら ask_human MCP ツールで質問を登録する。",
         f'issue パラメータには "{issue.ref}" を渡す。',
@@ -331,8 +334,8 @@ def process_issue(
     has_open_question = any(
         q.issue == issue.ref for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
     )
-    refined = any(
-        r.outcome == reports.OUTCOME_REFINED
+    requeue_reported = any(
+        r.outcome in (reports.OUTCOME_REFINED, reports.OUTCOME_ABORTED)
         for r in reports.list_reports(conn, issue=issue.ref)
         if r.created_at >= started_at
     )
@@ -340,7 +343,7 @@ def process_issue(
         status = registry.STATUS_PARKED
     elif result.exit_code != 0:
         status = registry.STATUS_FAILED
-    elif refined:
+    elif requeue_reported:
         status = registry.STATUS_QUEUED
     else:
         status = registry.STATUS_DONE
@@ -401,6 +404,8 @@ def run_loop(
         threshold = budget.threshold
     else:
         threshold = usage.DEFAULT_THRESHOLD
+    # MCP 側(report_progress の中断判定)が同じ閾値を参照できるようにする
+    control.set_value(db.connect(dbdir), control.KEY_USAGE_THRESHOLD, str(threshold))
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:

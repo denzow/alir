@@ -17,6 +17,7 @@ from alir import db
 KEY_PAUSED = "paused"
 KEY_HEARTBEAT = "heartbeat_at"
 KEY_USAGE_STATUS = "usage_status"
+KEY_USAGE_THRESHOLD = "usage_threshold"
 
 # events テーブルに残す直近件数。超えた分は登録時に削除する。
 MAX_EVENTS = 500

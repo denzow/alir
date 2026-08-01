@@ -165,3 +165,90 @@ def test_run_loop_skips_probe_when_queue_empty(tmp_path: Path) -> None:
         log=lambda _: None,
     )
     assert calls == []
+
+
+def test_report_progress_instructs_stop_over_threshold(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import control, mcp_server
+
+    conn = db.connect(tmp_path / "data")
+    control.set_value(conn, control.KEY_USAGE_THRESHOLD, "0.7")
+    monkeypatch.setattr(mcp_server, "_usage_cache", None)
+    monkeypatch.setattr(
+        mcp_server,
+        "usage_probe",
+        lambda: usage.UsageStatus(windows=(usage.UsageWindow("week (Fable)", 85.0),)),
+    )
+    result = mcp_server.report_progress_tool(conn, issue="denzow/alir#1", message="実装中")
+    assert result.get("stop") is True
+    assert "aborted" in result["message"]
+    # 進捗自体は記録されている
+    from alir import progress as progress_mod
+
+    assert progress_mod.list_progress(conn)[0].message == "実装中"
+
+
+def test_report_progress_no_stop_under_threshold(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import control, mcp_server
+
+    conn = db.connect(tmp_path / "data")
+    control.set_value(conn, control.KEY_USAGE_THRESHOLD, "0.7")
+    monkeypatch.setattr(mcp_server, "_usage_cache", None)
+    monkeypatch.setattr(
+        mcp_server,
+        "usage_probe",
+        lambda: usage.UsageStatus(windows=(usage.UsageWindow("week (Fable)", 55.0),)),
+    )
+    result = mcp_server.report_progress_tool(conn, issue="denzow/alir#1", message="実装中")
+    assert "stop" not in result
+
+
+def test_report_progress_survives_probe_failure(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import mcp_server
+
+    conn = db.connect(tmp_path / "data")
+    monkeypatch.setattr(mcp_server, "_usage_cache", None)
+
+    def broken() -> usage.UsageStatus:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mcp_server, "usage_probe", broken)
+    result = mcp_server.report_progress_tool(conn, issue="denzow/alir#1", message="実装中")
+    assert result["message"] == "Recorded."
+
+
+def test_process_issue_requeues_when_aborted(tmp_path: Path) -> None:
+    from alir import registry as registry_mod
+    from alir import reports
+
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    issue = registry_mod.add(conn, url=URL, workdir="/tmp")
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        conn2 = db.connect(dbdir)
+        reports.add(conn2, issue="denzow/alir#12", summary="使用量上限で中断", outcome="aborted")
+        return RunResult(exit_code=0, session_id=None, output="aborted")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_QUEUED
+
+
+def test_run_loop_stores_threshold_for_mcp(tmp_path: Path) -> None:
+    from alir import control
+
+    dbdir = tmp_path / "data"
+    db.connect(dbdir)
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        raise AssertionError("nothing to run")
+
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        usage_threshold=0.7,
+        log=lambda _: None,
+    )
+    conn = db.connect(dbdir)
+    assert control.get_value(conn, control.KEY_USAGE_THRESHOLD) == "0.7"

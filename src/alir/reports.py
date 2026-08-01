@@ -20,7 +20,8 @@ class ReportError(Exception):
 
 OUTCOME_IMPLEMENTED = "implemented"
 OUTCOME_REFINED = "refined"
-OUTCOMES = (OUTCOME_IMPLEMENTED, OUTCOME_REFINED)
+OUTCOME_ABORTED = "aborted"
+OUTCOMES = (OUTCOME_IMPLEMENTED, OUTCOME_REFINED, OUTCOME_ABORTED)
 
 # reports テーブルに残す直近件数。超えた分は登録時に削除する。
 MAX_REPORTS = 30
