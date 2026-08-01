@@ -8,7 +8,7 @@
   </div>
   <p class="question">{{ q.question }}</p>
   <p class="detail">impact {{ q.impact }} · timeout {{ q.timeout_action }}
-    · {{ q.created_at[:16] | replace("T", " ") }}</p>
+    · {{ q.created_at | localtime }}</p>
   {% if q.status == "open" %}
   <form method="post" action="/questions/{{ q.id }}/answer"
         hx-post="/questions/{{ q.id }}/answer" hx-target="#questions" hx-swap="innerHTML">

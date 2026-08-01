@@ -7,6 +7,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -22,6 +23,15 @@ from alir.registry import Issue, RegistryError
 
 _BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=_BASE / "templates")
+
+
+def _localtime(value: str | datetime) -> str:
+    """UTC で保存した時刻をローカル時刻の表示用文字列にする。"""
+    dt = datetime.fromisoformat(value) if isinstance(value, str) else value
+    return dt.astimezone().strftime("%m-%d %H:%M")
+
+
+templates.env.filters["localtime"] = _localtime
 
 router = APIRouter()
 

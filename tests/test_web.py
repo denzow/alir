@@ -287,3 +287,19 @@ def test_issue_card_shows_latest_report(client: TestClient, dbdir: Path, tmp_pat
     assert "レビュー指摘を反映" in res.text
     assert "実装して PR を作成" not in res.text
     assert 'href="https://github.com/denzow/alir/pull/5"' in res.text
+
+
+def test_localtime_filter_converts_utc_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time as time_mod
+    from datetime import datetime, timezone
+
+    from alir.web import _localtime
+
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    time_mod.tzset()
+    try:
+        assert _localtime("2026-08-01T00:30:00+00:00") == "08-01 09:30"
+        assert _localtime(datetime(2026, 8, 1, 0, 30, tzinfo=timezone.utc)) == "08-01 09:30"
+    finally:
+        monkeypatch.undo()
+        time_mod.tzset()

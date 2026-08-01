@@ -9,7 +9,7 @@
   <div class="card-top">
     <span class="status">{{ state }}</span>
     {% if heartbeat %}
-    <span>heartbeat {{ heartbeat.isoformat()[5:16] | replace("T", " ") }}</span>
+    <span>heartbeat {{ heartbeat | localtime }}</span>
     {% endif %}
   </div>
   {% if paused %}
@@ -29,7 +29,7 @@
   <div class="card-top"><span>直近のログ</span></div>
   <div class="events">
     {% for event in events %}
-    <div class="event"><span class="event-at">{{ event.at[5:16] | replace("T", " ") }}</span>{{ event.message }}</div>
+    <div class="event"><span class="event-at">{{ event.at | localtime }}</span>{{ event.message }}</div>
     {% else %}
     <p class="empty">まだログはありません。<br>ドライバが動き出すとここに流れます。</p>
     {% endfor %}
