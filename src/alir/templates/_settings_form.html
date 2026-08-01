@@ -11,9 +11,13 @@
     <p class="hint">
       使える変数: <code>{number}</code> = Issue 番号 /
       <code>{id}</code> = alir の Issue ID /
-      <code>{repo}</code> = リポジトリ名。
+      <code>{repo}</code> = リポジトリ名 /
+      <code>{type}</code> = 作業種別(bugfix / feature など、セッションが判断) /
+      <code>{summary}</code> = Issue 内容の短い英語スラッグ(セッションが命名)。
       一意になるよう <code>{number}</code> か <code>{id}</code> を必ず含める。
       既定は <code>alir/issue-{number}</code>。
+      例: <code>{number}/{type}/{summary}</code>。
+      {type} と {summary} は仮名で開始し、セッションが git branch -m で確定する。
       再開時は前回のブランチ名をそのまま使う。
     </p>
     <button>保存する</button>

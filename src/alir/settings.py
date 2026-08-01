@@ -15,8 +15,12 @@ from alir.registry import Issue
 KEY_BRANCH_TEMPLATE = "branch_template"
 DEFAULT_BRANCH_TEMPLATE = "alir/issue-{number}"
 
-# テンプレートで使える変数
-_PLACEHOLDERS = {"number", "id", "repo"}
+# ドライバが埋める変数
+_DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
+# セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
+SESSION_PLACEHOLDERS = {"type": "work", "summary": "wip"}
+
+_PLACEHOLDERS = _DRIVER_PLACEHOLDERS | set(SESSION_PLACEHOLDERS)
 
 _VALID_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/\-]*$")
 
@@ -47,7 +51,7 @@ def validate_branch_template(template: str) -> None:
         )
     if not fields & {"number", "id"}:
         raise SettingsError("template must contain {number} or {id} to keep branches unique")
-    sample = template.format(number=12, id=1, repo="repo")
+    sample = template.format(number=12, id=1, repo="repo", **SESSION_PLACEHOLDERS)
     if (
         not _VALID_BRANCH.match(sample)
         or ".." in sample
@@ -57,10 +61,21 @@ def validate_branch_template(template: str) -> None:
         raise SettingsError(f"template renders an invalid branch name: {sample}")
 
 
+def has_session_placeholders(template: str) -> bool:
+    """セッションが決める変数({type} / {summary})を含むかどうか。"""
+    fields = set(re.findall(r"{([^{}]*)}", template))
+    return bool(fields & set(SESSION_PLACEHOLDERS))
+
+
 def render_branch(template: str, issue: Issue) -> str:
-    """テンプレートから Issue のブランチ名を作る。"""
+    """テンプレートから Issue のブランチ名を作る。
+
+    セッションが決める変数は仮の値で埋める。
+    実際の名前はセッションが git branch -m で付け、終了後にドライバが取り込む。
+    """
     return template.format(
         number=issue.number,
         id=issue.id,
         repo=issue.repo.split("/")[-1],
+        **SESSION_PLACEHOLDERS,
     )

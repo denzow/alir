@@ -289,3 +289,47 @@ def test_prompt_includes_refinement_cycle(dbdir: Path) -> None:
     assert "リファインメント" in prompt
     assert 'outcome="refined"' in prompt
     assert "[refined] 仕様を整理" in prompt
+
+
+def test_prompt_instructs_rename_for_session_placeholders(dbdir: Path) -> None:
+    from alir import settings
+
+    conn = db.connect(dbdir)
+    settings.set_branch_template(conn, "{number}/{type}/{summary}")
+    issue = _add_issue(dbdir)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "git branch -m" in prompt
+    assert "12/work/wip" in prompt
+
+
+def test_prompt_omits_rename_without_session_placeholders(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "git branch -m" not in prompt
+
+
+def test_process_issue_captures_renamed_branch(dbdir: Path, tmp_path: Path) -> None:
+    """セッションが git branch -m で改名した名前を registry に取り込む。"""
+    repo = tmp_path / "wt"
+    repo.mkdir()
+    _run_git(repo, "init", "-b", "12/work/wip")
+    (repo / "a.txt").write_text("1")
+    _run_git(repo, "add", ".")
+    _run_git(repo, "commit", "-m", "c1")
+
+    issue = _add_issue(dbdir)
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        _run_git(cwd, "branch", "-m", "12/bugfix/fix-login")
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    def worktree(issue: registry.Issue, branch: str) -> Path:
+        return repo
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
+    assert finished.branch == "12/bugfix/fix-login"

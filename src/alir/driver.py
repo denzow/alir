@@ -85,6 +85,19 @@ def _default_branch_ref(workdir: Path) -> str | None:
     return None
 
 
+def _current_branch(path: Path) -> str | None:
+    """worktree の現在のブランチ名を返す。読めなければ None。"""
+    proc = subprocess.run(
+        ["git", "-C", str(path), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
 def setup_worktree(issue: Issue, branch: str) -> Path:
     """Issue 用の worktree と指定のブランチを用意し、worktree のパスを返す。
 
@@ -120,8 +133,13 @@ def build_prompt(
     *,
     answers: list[questions.Question],
     past_reports: list[reports.Report] | None = None,
+    branch_template: str | None = None,
 ) -> str:
-    """1 Issue を処理するセッションのプロンプトを組み立てる。"""
+    """1 Issue を処理するセッションのプロンプトを組み立てる。
+
+    branch_template にセッションが決める変数({type} / {summary})が含まれる場合は、
+    改名の指示を加える。
+    """
     lines = [
         "あなたは GitHub Issue を自律的に処理するエージェントである。",
         "",
@@ -161,6 +179,15 @@ def build_prompt(
         "質問を登録したら回答を待たず、そこまでの実施内容を report_result で報告して"
         "即座に終了する。",
     ]
+    if branch_template is not None and settings.has_session_placeholders(branch_template):
+        lines += [
+            "",
+            "ブランチ名について:",
+            f'現在のブランチ名 "{branch}" は仮名である。実装に入る前に、',
+            f'テンプレート "{branch_template}" の {{type}} に作業種別(bugfix / feature など)、',
+            "{summary} に Issue 内容の短い英語スラッグ(小文字とハイフン)を当てはめた名前を決め、",
+            "`git branch -m <新しい名前>` で改名してから作業する。push もその名前で行う。",
+        ]
     if past_reports:
         lines += ["", "これまでの実施記録(新しい順):"]
         for report in past_reports:
@@ -265,14 +292,26 @@ def process_issue(
         if q.issue == issue.ref and q.answer is not None
     ]
     past_reports = reports.list_reports(conn, issue=issue.ref, limit=3)
-    branch = issue.branch or settings.render_branch(settings.branch_template(conn), issue)
+    template = settings.branch_template(conn)
+    branch = issue.branch or settings.render_branch(template, issue)
     try:
         path = worktree(issue, branch)
-        prompt = build_prompt(issue, branch, answers=answered, past_reports=past_reports)
+        prompt = build_prompt(
+            issue,
+            branch,
+            answers=answered,
+            past_reports=past_reports,
+            branch_template=None if issue.branch else template,
+        )
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
         registry.set_status(db.connect(dbdir), iid, registry.STATUS_FAILED)
         raise
+
+    # セッションが git branch -m で改名した場合に備え、実際のブランチ名を取り込む
+    actual = _current_branch(path)
+    if actual:
+        branch = actual
 
     conn = db.connect(dbdir)
     if result.usage:

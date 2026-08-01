@@ -44,3 +44,18 @@ def test_render_branch(conn) -> None:  # type: ignore[no-untyped-def]
     issue = registry.add(conn, url="https://github.com/denzow/alir/issues/12", workdir="/tmp")
     assert settings.render_branch("feature/{repo}-{number}", issue) == "feature/alir-12"
     assert settings.render_branch("work/{id}", issue) == "work/1"
+
+
+def test_session_placeholder_template_accepted(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_branch_template(conn, "{number}/{type}/{summary}")
+    assert settings.branch_template(conn) == "{number}/{type}/{summary}"
+
+
+def test_render_branch_fills_session_placeholders_with_provisional(conn) -> None:  # type: ignore[no-untyped-def]
+    issue = registry.add(conn, url="https://github.com/denzow/alir/issues/12", workdir="/tmp")
+    assert settings.render_branch("{number}/{type}/{summary}", issue) == "12/work/wip"
+
+
+def test_has_session_placeholders() -> None:
+    assert settings.has_session_placeholders("{number}/{type}/{summary}") is True
+    assert settings.has_session_placeholders("alir/issue-{number}") is False

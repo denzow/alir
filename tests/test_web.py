@@ -400,9 +400,7 @@ def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
     from alir import control
 
     conn = db.connect(dbdir)
-    control.set_value(
-        conn, control.KEY_USAGE_STATUS, '[["session", 19.0], ["week (Fable)", 54.0]]'
-    )
+    control.set_value(conn, control.KEY_USAGE_STATUS, '[["session", 19.0], ["week (Fable)", 54.0]]')
     res = client.get("/loop")
     assert "week (Fable)" in res.text
     assert "54%" in res.text
