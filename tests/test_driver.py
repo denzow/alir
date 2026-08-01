@@ -333,3 +333,12 @@ def test_process_issue_captures_renamed_branch(dbdir: Path, tmp_path: Path) -> N
 
     finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
     assert finished.branch == "12/bugfix/fix-login"
+
+
+def test_prompt_requires_explicit_acceptance_criteria(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "明文化" in prompt
+    assert "推測できそうでもリファインメントを行う" in prompt

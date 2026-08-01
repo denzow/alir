@@ -196,7 +196,7 @@ def test_issues_requeue_failed(client: TestClient, dbdir: Path, tmp_path: Path) 
 
     res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
     assert res.status_code == 200
-    assert 'card st-failed' not in res.text  # requeue されて history から消える
+    assert "card st-failed" not in res.text  # requeue されて history から消える
 
     conn = db.connect(dbdir)
     assert registry.get(conn, issue.id).status == registry.STATUS_QUEUED
@@ -229,7 +229,7 @@ def test_issues_page_excludes_finished(client: TestClient, dbdir: Path, tmp_path
     issue = registry.add(conn, url=URL, workdir=str(tmp_path))
     registry.set_status(conn, issue.id, registry.STATUS_DONE)
     res = client.get("/issues")
-    assert 'card st-done' not in res.text
+    assert "card st-done" not in res.text
     assert "登録された Issue はありません" in res.text
 
 
