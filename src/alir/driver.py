@@ -169,6 +169,10 @@ def build_prompt(
         '6. 実装は行わず、report_result MCP ツール(outcome="refined")で報告して終了する。',
         "   次のセッションがリファインメント結果を前提に実装する。",
         "",
+        "どちらの場合も、セッションの終了前に必ず report_result を 1 回呼ぶ。",
+        "何もする必要がなかった場合(実装済みの PR がすでにある、など)も、",
+        'その旨を summary にして report_result(outcome="implemented")で報告する。',
+        "",
         "作業の節目(調査を終えた、実装に入った、テストを回した、PR を作った、など)ごとに、",
         "report_progress MCP ツールで進捗を 1 行報告する。"
         f'issue パラメータには "{issue.ref}" を渡す。',
