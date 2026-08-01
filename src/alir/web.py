@@ -46,11 +46,16 @@ def _list_questions(dbdir: Path, *, show_all: bool) -> list[Question]:
 
 
 def _render(
-    request: Request, template: str, context: dict[str, Any], *, fragment: str | None = None
+    request: Request,
+    template: str,
+    context: dict[str, Any],
+    *,
+    fragment: str | None = None,
+    headers: dict[str, str] | None = None,
 ) -> Response:
     """全画面テンプレートを返す。htmx リクエストなら断片テンプレートを返す。"""
     name = fragment if fragment and _is_htmx(request) else template
-    return templates.TemplateResponse(request, name, context)
+    return templates.TemplateResponse(request, name, context, headers=headers)
 
 
 @router.get("/")
@@ -140,7 +145,9 @@ async def issues_add(request: Request) -> Response:
         except RegistryError as exc:
             error = str(exc)
 
-    return await _issues_result(request, dbdir, error)
+    return await _issues_result(
+        request, dbdir, error, trigger="issue-added" if error is None else None
+    )
 
 
 @router.post("/issues/reorder")
@@ -183,12 +190,21 @@ async def issues_requeue(request: Request, iid: int) -> Response:
     return await _issues_result(request, dbdir, error)
 
 
-async def _issues_result(request: Request, dbdir: Path, error: str | None) -> Response:
-    """issues への POST の結果を返す。htmx なら一覧断片、通常はリダイレクト。"""
+async def _issues_result(
+    request: Request, dbdir: Path, error: str | None, *, trigger: str | None = None
+) -> Response:
+    """issues への POST の結果を返す。htmx なら一覧断片、通常はリダイレクト。
+
+    trigger を指定すると HX-Trigger ヘッダでクライアント側イベントを発火させる
+    (フォームのクリアなど、断片の外の後処理に使う)。
+    """
     if _is_htmx(request):
         context = await db.run_in_thread(lambda: _issues_context(db.connect(dbdir)))
         context["error"] = error
-        return _render(request, "_issue_list.html", context, fragment="_issue_list.html")
+        headers = {"HX-Trigger": trigger} if trigger else None
+        return _render(
+            request, "_issue_list.html", context, fragment="_issue_list.html", headers=headers
+        )
     if error:
         return RedirectResponse(f"/issues?error={quote(error)}", 303)
     return RedirectResponse("/issues", 303)

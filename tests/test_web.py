@@ -316,3 +316,23 @@ def test_localtime_filter_converts_utc_to_local(monkeypatch: pytest.MonkeyPatch)
     finally:
         monkeypatch.undo()
         time_mod.tzset()
+
+
+def test_issues_add_success_sets_trigger_header(client: TestClient, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/issues/add",
+        data={"url": URL, "workdir": str(workdir)},
+        headers={"HX-Request": "true"},
+    )
+    assert res.headers.get("HX-Trigger") == "issue-added"
+
+
+def test_issues_add_error_has_no_trigger_header(client: TestClient) -> None:
+    res = client.post(
+        "/issues/add",
+        data={"url": URL, "workdir": "/no/such/dir"},
+        headers={"HX-Request": "true"},
+    )
+    assert "HX-Trigger" not in res.headers

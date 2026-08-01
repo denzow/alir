@@ -27,6 +27,10 @@
 </div>
 <script src="/static/sortable.min.js"></script>
 <script>
+htmx.on("issue-added", function () {
+  var form = document.querySelector(".add-form form");
+  if (form) form.reset();
+});
 htmx.onLoad(function () {
   var list = document.getElementById("queue-list");
   if (!list || list._sortable) return;
