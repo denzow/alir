@@ -47,6 +47,19 @@ CREATE TABLE runs (
     created_at TEXT NOT NULL
 )
 """,
+    "events": """
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    message TEXT NOT NULL
+)
+""",
+    "control": """
+CREATE TABLE control (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)
+""",
     "issues": """
 CREATE TABLE issues (
     id INTEGER PRIMARY KEY,

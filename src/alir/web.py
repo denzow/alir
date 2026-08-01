@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import db, questions, registry
+from alir import control, db, questions, registry
 from alir.questions import Question, QuestionError
 from alir.registry import Issue, RegistryError
 
@@ -167,6 +167,50 @@ async def _issues_result(request: Request, dbdir: Path, error: str | None) -> Re
     if error:
         return RedirectResponse(f"/issues?error={quote(error)}", 303)
     return RedirectResponse("/issues", 303)
+
+
+async def _loop_context(dbdir: Path) -> dict[str, Any]:
+    def work() -> dict[str, Any]:
+        conn = db.connect(dbdir)
+        return {
+            "paused": control.is_paused(conn),
+            "alive": control.driver_alive(conn),
+            "heartbeat": control.heartbeat_at(conn),
+            "events": control.recent_events(conn),
+        }
+
+    return await db.run_in_thread(work)
+
+
+@router.get("/loop")
+async def loop_index(request: Request) -> Response:
+    context = await _loop_context(request.app.state.dbdir)
+    return _render(request, "loop.html", context, fragment="_loop_panel.html")
+
+
+@router.post("/loop/pause")
+async def loop_pause(request: Request) -> Response:
+    return await _loop_toggle(request, paused=True)
+
+
+@router.post("/loop/resume")
+async def loop_resume(request: Request) -> Response:
+    return await _loop_toggle(request, paused=False)
+
+
+async def _loop_toggle(request: Request, *, paused: bool) -> Response:
+    dbdir = request.app.state.dbdir
+
+    def work() -> None:
+        conn = db.connect(dbdir)
+        control.set_paused(conn, paused)
+        control.log_event(conn, "pause requested" if paused else "resume requested")
+
+    await db.run_in_thread(work)
+    if _is_htmx(request):
+        context = await _loop_context(dbdir)
+        return _render(request, "_loop_panel.html", context, fragment="_loop_panel.html")
+    return RedirectResponse("/loop", 303)
 
 
 def create_app(dbdir: Path, *, lifespan: Any = None) -> FastAPI:

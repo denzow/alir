@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>ループ</h1>
+</div>
+<div id="loop-panel" hx-get="/loop" hx-trigger="every 5s" hx-swap="innerHTML">
+{% include "_loop_panel.html" %}
+</div>
+{% endblock %}

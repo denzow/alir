@@ -238,3 +238,34 @@ def test_static_htmx_served(client: TestClient) -> None:
     res = client.get("/static/htmx.min.js")
     assert res.status_code == 200
     assert "htmx" in res.text[:200]
+
+
+def test_loop_page_shows_stopped(client: TestClient, dbdir: Path) -> None:
+    res = client.get("/loop")
+    assert res.status_code == 200
+    assert "stopped" in res.text
+    assert "一時停止" in res.text
+
+
+def test_loop_pause_and_resume(client: TestClient, dbdir: Path) -> None:
+    from alir import control
+
+    res = client.post("/loop/pause", headers={"HX-Request": "true"})
+    assert "<html" not in res.text
+    assert "paused" in res.text
+    conn = db.connect(dbdir)
+    assert control.is_paused(conn) is True
+
+    res = client.post("/loop/resume", follow_redirects=True)
+    assert res.status_code == 200
+    conn = db.connect(dbdir)
+    assert control.is_paused(conn) is False
+
+
+def test_loop_page_shows_events(client: TestClient, dbdir: Path) -> None:
+    from alir import control
+
+    conn = db.connect(dbdir)
+    control.log_event(conn, "start #1 denzow/alir#12")
+    res = client.get("/loop")
+    assert "start #1 denzow/alir#12" in res.text

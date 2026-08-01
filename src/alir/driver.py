@@ -8,6 +8,7 @@ claude の実行と worktree の用意は差し替え可能にしてテストす
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import json
 import os
 import re
@@ -19,7 +20,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from alir import db, questions, registry, resume, usage
+from alir import control, db, questions, registry, resume, usage
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -237,22 +238,41 @@ def run_loop(
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
     各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
-    Issue を queued に戻す。予算の閾値超過とレート制限時のバックオフ中は
-    新規 Issue を開始しない(実行中のものは完了まで走らせる)。
+    Issue を queued に戻す。手動の一時停止フラグ、予算の閾値超過、
+    レート制限時のバックオフ中は新規 Issue を開始しない
+    (実行中のものは完了まで走らせる)。
+    イベントは events テーブルにも記録し、Web UI から参照できるようにする。
     """
+
+    def emit(message: str) -> None:
+        log(message)
+        # ログの永続化に失敗してもループは止めない
+        with contextlib.suppress(Exception):
+            control.log_event(db.connect(dbdir), message)
+
     backoff = BACKOFF_INITIAL
     backoff_until = 0.0
+    last_pause_reason: str | None = None
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:
             conn = db.connect(dbdir)
+            control.heartbeat(conn)
             for q in resume.expire_timeouts(conn, timeout=question_timeout):
-                log(f"question #{q.id} expired: proceeding with recommended")
+                emit(f"question #{q.id} expired: proceeding with recommended")
             for requeued in resume.requeue_answered(conn):
-                log(f"requeue #{requeued.id} {requeued.ref}")
-            paused = usage.pause_reason(conn, budget) if budget is not None else None
-            if paused:
-                log(f"pause: {paused}")
+                emit(f"requeue #{requeued.id} {requeued.ref}")
+
+            paused: str | None
+            if control.is_paused(conn):
+                paused = "paused manually"
+            elif budget is not None:
+                paused = usage.pause_reason(conn, budget)
+            else:
+                paused = None
+            if paused != last_pause_reason:
+                emit(f"pause: {paused}" if paused else "resume")
+                last_pause_reason = paused
             in_backoff = time.monotonic() < backoff_until
 
             while not paused and not in_backoff and len(active) < parallel:
@@ -265,7 +285,7 @@ def run_loop(
                         registry.set_status(conn, issue.id, registry.STATUS_RUNNING)
                 if issue is None:
                     break
-                log(f"start #{issue.id} {issue.ref}")
+                emit(f"start #{issue.id} {issue.ref}")
                 future = pool.submit(
                     process_issue,
                     dbdir,
@@ -289,11 +309,11 @@ def run_loop(
                 iid = active.pop(future)
                 try:
                     finished = future.result()
-                    log(f"finish #{finished.id} {finished.ref}: {finished.status}")
+                    emit(f"finish #{finished.id} {finished.ref}: {finished.status}")
                     backoff = BACKOFF_INITIAL
                 except RateLimited as exc:
-                    log(f"rate limited #{iid}: {exc}; backoff {int(backoff)}s")
+                    emit(f"rate limited #{iid}: {exc}; backoff {int(backoff)}s")
                     backoff_until = time.monotonic() + backoff
                     backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
                 except Exception as exc:  # noqa: BLE001
-                    log(f"error #{iid}: {exc}")
+                    emit(f"error #{iid}: {exc}")

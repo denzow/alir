@@ -1,0 +1,37 @@
+{% if paused %}
+  {% set state, state_class = "paused", "st-open" %}
+{% elif alive %}
+  {% set state, state_class = "running", "st-running" %}
+{% else %}
+  {% set state, state_class = "stopped", "st-expired" %}
+{% endif %}
+<div class="card {{ state_class }}">
+  <div class="card-top">
+    <span class="status">{{ state }}</span>
+    {% if heartbeat %}
+    <span>heartbeat {{ heartbeat.isoformat()[5:16] | replace("T", " ") }}</span>
+    {% endif %}
+  </div>
+  {% if paused %}
+  <p class="loop-note">新規 Issue の実行を止めています。実行中のセッションは完了まで走ります。</p>
+  {% elif alive %}
+  <p class="loop-note">ドライバは稼働中です。queued の Issue を順に処理します。</p>
+  {% else %}
+  <p class="loop-note">ドライバのハートビートが途絶えています。alir serve または alir run が起動しているか確認してください。</p>
+  {% endif %}
+  <form method="post" action="/loop/{{ 'resume' if paused else 'pause' }}"
+        hx-post="/loop/{{ 'resume' if paused else 'pause' }}"
+        hx-target="#loop-panel" hx-swap="innerHTML">
+    <button>{{ '再開する' if paused else '新規実行を一時停止する' }}</button>
+  </form>
+</div>
+<div class="card">
+  <div class="card-top"><span>直近のログ</span></div>
+  <div class="events">
+    {% for event in events %}
+    <div class="event"><span class="event-at">{{ event.at[5:16] | replace("T", " ") }}</span>{{ event.message }}</div>
+    {% else %}
+    <p class="empty">まだログはありません。<br>ドライバが動き出すとここに流れます。</p>
+    {% endfor %}
+  </div>
+</div>
