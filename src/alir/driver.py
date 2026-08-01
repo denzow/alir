@@ -407,7 +407,9 @@ def run_loop(
             for requeued in resume.requeue_answered(conn):
                 emit(f"requeue #{requeued.id} {requeued.ref}")
 
-            if usage_probe is not None and time.monotonic() >= next_probe:
+            # 開始候補がないときは使用率を取りに行かない(アイドル時の無駄な実行を避ける)
+            has_queued = registry.next_queued(conn) is not None
+            if usage_probe is not None and has_queued and time.monotonic() >= next_probe:
                 probe_status = usage_probe()
                 next_probe = time.monotonic() + usage_check_ttl
                 if probe_status is not None:

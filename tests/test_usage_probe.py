@@ -137,3 +137,28 @@ def test_run_loop_honors_usage_threshold_without_budget(tmp_path: Path) -> None:
     )
     conn = db.connect(dbdir)
     assert registry.list_issues(conn)[0].status == registry.STATUS_DONE
+
+
+def test_run_loop_skips_probe_when_queue_empty(tmp_path: Path) -> None:
+    """キューが空なら使用率を取りに行かない。"""
+    dbdir = tmp_path / "data"
+    db.connect(dbdir)
+
+    calls: list[int] = []
+
+    def probe() -> usage.UsageStatus:
+        calls.append(1)
+        return usage.UsageStatus(windows=(usage.UsageWindow("session", 10.0),))
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        raise AssertionError("nothing to run")
+
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        usage_probe=probe,
+        log=lambda _: None,
+    )
+    assert calls == []
