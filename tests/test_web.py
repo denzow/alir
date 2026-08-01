@@ -130,13 +130,13 @@ def test_workdir_datalist(client: TestClient, dbdir: Path, tmp_path: Path) -> No
     assert f'<option value="{workdir}">' in res.text
 
 
-def test_issues_move(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+def test_issues_reorder(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     from alir import registry
 
     conn = db.connect(dbdir)
     registry.add(conn, url=URL, workdir=str(tmp_path))
     registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir=str(tmp_path))
-    res = client.post("/issues/2/move/up", follow_redirects=True)
+    res = client.post("/issues/reorder", data={"order": "2,1"}, follow_redirects=True)
     assert res.status_code == 200
 
     conn = db.connect(dbdir)
@@ -144,14 +144,27 @@ def test_issues_move(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     assert items == [2, 1]
 
 
-def test_issues_move_rejects_done(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+def test_issues_reorder_rejects_mismatch(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     from alir import registry
 
     conn = db.connect(dbdir)
-    issue = registry.add(conn, url=URL, workdir=str(tmp_path))
-    registry.set_status(conn, issue.id, registry.STATUS_DONE)
-    res = client.post(f"/issues/{issue.id}/move/up", follow_redirects=True)
-    assert "can be moved" in res.text
+    registry.add(conn, url=URL, workdir=str(tmp_path))
+    registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir=str(tmp_path))
+    res = client.post("/issues/reorder", data={"order": "1"}, follow_redirects=True)
+    assert "order must contain exactly" in res.text
+
+
+def test_queue_cards_are_draggable(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir=str(tmp_path))
+    done = registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir=str(tmp_path))
+    registry.set_status(conn, done.id, registry.STATUS_DONE)
+    res = client.get("/issues")
+    assert 'data-issue-id="1"' in res.text
+    assert 'data-issue-id="2"' not in res.text
+    assert "drag-handle" in res.text
 
 
 def test_issues_add_rejects_bad_workdir(client: TestClient) -> None:

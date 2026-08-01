@@ -183,13 +183,19 @@ button:hover { border-color: var(--accent); }
   font-size: 0.78rem; margin: 0.15rem 0; }
 .issue-ref a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--line); }
 .issue-ref a:hover { color: var(--accent); border-bottom-color: var(--accent); }
-.card-top .move { margin-left: auto; display: flex; gap: 0.35rem; }
-.move form { margin: 0; }
-.move button {
-  padding: 0.2rem 0.55rem; font-size: 0.75rem; line-height: 1.4;
-  color: var(--muted); background: var(--inset);
+.section-label {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--muted); margin: 1.4rem 0 0.2rem;
 }
-.move button:hover { color: var(--text); border-color: var(--accent); }
+.empty-inline { color: var(--muted); font-size: 0.85rem; margin: 0.8rem 0; }
+.drag-handle {
+  margin-left: auto; padding: 0.1rem 0.4rem;
+  color: var(--muted); font-size: 0.95rem;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.sortable-ghost { opacity: 0.35; }
+.sortable-chosen { border-color: var(--accent); }
 .workdir {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 0.74rem; color: var(--muted);

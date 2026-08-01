@@ -1,21 +1,9 @@
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
-{% for issue in items %}
-<div class="card st-{{ issue.status }}">
+{% macro issue_card(issue, draggable=False) %}
+<div class="card st-{{ issue.status }}"{% if draggable %} data-issue-id="{{ issue.id }}"{% endif %}>
   <div class="card-top">
     <span class="status">{{ issue.status }}</span>
     <span>#{{ issue.id }}</span>
-    {% if issue.status in ("queued", "parked") %}
-    <span class="move">
-      <form method="post" action="/issues/{{ issue.id }}/move/up"
-            hx-post="/issues/{{ issue.id }}/move/up" hx-target="#issues" hx-swap="innerHTML">
-        <button aria-label="上へ移動">▲</button>
-      </form>
-      <form method="post" action="/issues/{{ issue.id }}/move/down"
-            hx-post="/issues/{{ issue.id }}/move/down" hx-target="#issues" hx-swap="innerHTML">
-        <button aria-label="下へ移動">▼</button>
-      </form>
-    </span>
-    {% endif %}
+    {% if draggable %}<span class="drag-handle" aria-label="ドラッグで並び替え">⠿</span>{% endif %}
   </div>
   <p class="issue-title">{{ issue.title or issue.ref }}</p>
   <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
@@ -37,6 +25,18 @@
   </form>
   {% endif %}
 </div>
+{% endmacro %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if queue_items or other_items %}
+<h2 class="section-label">キュー (ドラッグで並び替え)</h2>
+<div id="queue-list">
+  {% for issue in queue_items %}{{ issue_card(issue, draggable=True) }}{% endfor %}
+</div>
+{% if not queue_items %}<p class="empty-inline">キューは空です。</p>{% endif %}
+{% if other_items %}
+<h2 class="section-label">実行中と完了済み</h2>
+{% for issue in other_items %}{{ issue_card(issue) }}{% endfor %}
+{% endif %}
 {% else %}
 <p class="empty">登録された Issue はありません。<br>上のフォームから消化したい Issue を追加できます。</p>
-{% endfor %}
+{% endif %}

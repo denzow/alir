@@ -25,4 +25,24 @@
 <div id="issues">
 {% include "_issue_list.html" %}
 </div>
+<script src="/static/sortable.min.js"></script>
+<script>
+htmx.onLoad(function () {
+  var list = document.getElementById("queue-list");
+  if (!list || list._sortable) return;
+  list._sortable = new Sortable(list, {
+    handle: ".drag-handle",
+    animation: 150,
+    onEnd: function () {
+      var ids = Array.from(list.querySelectorAll("[data-issue-id]"))
+        .map(function (el) { return el.dataset.issueId; });
+      htmx.ajax("POST", "/issues/reorder", {
+        target: "#issues",
+        swap: "innerHTML",
+        values: { order: ids.join(",") },
+      });
+    },
+  });
+});
+</script>
 {% endblock %}

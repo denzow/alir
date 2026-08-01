@@ -78,38 +78,36 @@ def test_set_status_rejects_unknown_status(conn) -> None:  # type: ignore[no-unt
         registry.set_status(conn, issue.id, "sleeping")
 
 
-def test_move_reorders_queued(conn) -> None:  # type: ignore[no-untyped-def]
+def test_reorder_sets_new_order(conn) -> None:  # type: ignore[no-untyped-def]
     a = registry.add(conn, url=URL, workdir="/tmp")
     b = registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
     c = registry.add(conn, url="https://github.com/denzow/alir/issues/14", workdir="/tmp")
 
-    registry.move(conn, c.id, "up")
-    assert [i.id for i in registry.list_issues(conn)] == [a.id, c.id, b.id]
-
-    registry.move(conn, a.id, "down")
+    registry.reorder(conn, [c.id, a.id, b.id])
     assert [i.id for i in registry.list_issues(conn)] == [c.id, a.id, b.id]
 
 
-def test_move_at_edge_is_noop(conn) -> None:  # type: ignore[no-untyped-def]
+def test_reorder_rejects_mismatched_ids(conn) -> None:  # type: ignore[no-untyped-def]
     a = registry.add(conn, url=URL, workdir="/tmp")
-    b = registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
-    registry.move(conn, a.id, "up")
-    assert [i.id for i in registry.list_issues(conn)] == [a.id, b.id]
-
-
-def test_move_rejects_non_reorderable(conn) -> None:  # type: ignore[no-untyped-def]
-    issue = registry.add(conn, url=URL, workdir="/tmp")
-    registry.set_status(conn, issue.id, registry.STATUS_DONE)
+    registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
     with pytest.raises(RegistryError):
-        registry.move(conn, issue.id, "up")
+        registry.reorder(conn, [a.id])
 
 
-def test_move_does_not_touch_finished_priority(conn) -> None:  # type: ignore[no-untyped-def]
+def test_reorder_rejects_non_reorderable_id(conn) -> None:  # type: ignore[no-untyped-def]
+    a = registry.add(conn, url=URL, workdir="/tmp")
+    done = registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
+    registry.set_status(conn, done.id, registry.STATUS_DONE)
+    with pytest.raises(RegistryError):
+        registry.reorder(conn, [done.id, a.id])
+
+
+def test_reorder_does_not_touch_finished_priority(conn) -> None:  # type: ignore[no-untyped-def]
     done = registry.add(conn, url=URL, workdir="/tmp", priority=99)
     registry.set_status(conn, done.id, registry.STATUS_DONE)
     a = registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
     b = registry.add(conn, url="https://github.com/denzow/alir/issues/14", workdir="/tmp")
-    registry.move(conn, b.id, "up")
+    registry.reorder(conn, [b.id, a.id])
     assert registry.get(conn, done.id).priority == 99
     assert [i.id for i in registry.list_issues(conn, status=registry.STATUS_QUEUED)] == [b.id, a.id]
 

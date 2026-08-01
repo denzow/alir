@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from alir import control, db, questions, registry, reports
 from alir.questions import Question, QuestionError
-from alir.registry import Issue, RegistryError
+from alir.registry import RegistryError
 
 _BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=_BASE / "templates")
@@ -43,10 +43,6 @@ def _is_htmx(request: Request) -> bool:
 def _list_questions(dbdir: Path, *, show_all: bool) -> list[Question]:
     status = None if show_all else questions.STATUS_OPEN
     return questions.list_questions(db.connect(dbdir), status=status)
-
-
-def _list_issues(dbdir: Path) -> list[Issue]:
-    return registry.list_issues(db.connect(dbdir))
 
 
 def _render(
@@ -96,17 +92,24 @@ async def answer_question(request: Request, qid: int) -> Response:
     return RedirectResponse("/", 303)
 
 
+def _issues_context(conn: Any) -> dict[str, Any]:
+    items = registry.list_issues(conn)
+    return {
+        "queue_items": [i for i in items if i.status in registry.REORDERABLE],
+        "other_items": [i for i in items if i.status not in registry.REORDERABLE],
+        "reports": reports.latest_by_issue(conn),
+    }
+
+
 @router.get("/issues")
 async def issues_index(request: Request) -> Response:
     dbdir = request.app.state.dbdir
 
     def work() -> dict[str, Any]:
         conn = db.connect(dbdir)
-        return {
-            "items": registry.list_issues(conn),
-            "workdirs": registry.list_workdirs(conn),
-            "reports": reports.latest_by_issue(conn),
-        }
+        context = _issues_context(conn)
+        context["workdirs"] = registry.list_workdirs(conn)
+        return context
 
     context = await db.run_in_thread(work)
     context["error"] = request.query_params.get("error")
@@ -140,15 +143,23 @@ async def issues_add(request: Request) -> Response:
     return await _issues_result(request, dbdir, error)
 
 
-@router.post("/issues/{iid}/move/{direction}")
-async def issues_move(request: Request, iid: int, direction: str) -> Response:
+@router.post("/issues/reorder")
+async def issues_reorder(request: Request) -> Response:
     dbdir = request.app.state.dbdir
+    form = await request.form()
+    raw = str(form.get("order") or "").strip()
 
     error: str | None = None
+    ids: list[int] = []
     try:
-        await db.run_in_thread(lambda: registry.move(db.connect(dbdir), iid, direction))
-    except RegistryError as exc:
-        error = str(exc)
+        ids = [int(part) for part in raw.split(",") if part]
+    except ValueError:
+        error = "order must be a comma-separated list of ids"
+    if error is None:
+        try:
+            await db.run_in_thread(lambda: registry.reorder(db.connect(dbdir), ids))
+        except RegistryError as exc:
+            error = str(exc)
     return await _issues_result(request, dbdir, error)
 
 
@@ -175,15 +186,7 @@ async def issues_requeue(request: Request, iid: int) -> Response:
 async def _issues_result(request: Request, dbdir: Path, error: str | None) -> Response:
     """issues への POST の結果を返す。htmx なら一覧断片、通常はリダイレクト。"""
     if _is_htmx(request):
-
-        def work() -> dict[str, Any]:
-            conn = db.connect(dbdir)
-            return {
-                "items": registry.list_issues(conn),
-                "reports": reports.latest_by_issue(conn),
-            }
-
-        context = await db.run_in_thread(work)
+        context = await db.run_in_thread(lambda: _issues_context(db.connect(dbdir)))
         context["error"] = error
         return _render(request, "_issue_list.html", context, fragment="_issue_list.html")
     if error:

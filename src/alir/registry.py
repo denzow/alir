@@ -178,34 +178,26 @@ def list_workdirs(conn: iceql.Connection) -> list[str]:
     return seen
 
 
-def move(conn: iceql.Connection, iid: int, direction: str) -> Issue:
-    """queued / parked の Issue の並び順を 1 つ上げ下げする。
+def reorder(conn: iceql.Connection, ids: list[int]) -> list[Issue]:
+    """queued / parked の並び順を ids の順に設定する。
 
-    並び替えの対象全体に priority を降順で振り直すので、
+    ids は並び替え対象(queued / parked)の全 Issue を過不足なく含む必要がある。
+    対象全体に priority を降順で振り直すので、
     それ以外の状態(done / failed など)の priority には影響しない。
-    端で動かそうとした場合は何もしない。
     """
-    if direction not in ("up", "down"):
-        raise RegistryError('direction must be "up" or "down"')
     with db.transaction(conn):
-        issue = get(conn, iid)
-        if issue.status not in REORDERABLE:
-            raise RegistryError(f"issue {iid} is {issue.status}; only queued/parked can be moved")
-        items = [i for i in list_issues(conn) if i.status in REORDERABLE]
-        index = next(i for i, item in enumerate(items) if item.id == iid)
-        target = index - 1 if direction == "up" else index + 1
-        if not (0 <= target < len(items)):
-            return issue
-        items[index], items[target] = items[target], items[index]
+        current = {i.id: i for i in list_issues(conn) if i.status in REORDERABLE}
+        if sorted(ids) != sorted(current):
+            raise RegistryError("order must contain exactly the queued/parked issue ids")
         now = _now()
-        for position, item in enumerate(items):
-            priority = len(items) - position
-            if item.priority != priority:
+        for position, iid in enumerate(ids):
+            priority = len(ids) - position
+            if current[iid].priority != priority:
                 conn.execute(
                     "UPDATE issues SET priority = ?, updated_at = ? WHERE id = ?",
-                    (priority, now, item.id),
+                    (priority, now, iid),
                 )
-    return get(conn, iid)
+    return [get(conn, iid) for iid in ids]
 
 
 def next_queued(conn: iceql.Connection) -> Issue | None:
