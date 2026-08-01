@@ -25,17 +25,16 @@ def ask_human_tool(
     session_id: str | None = None,
 ) -> dict[str, Any]:
     """質問を登録し、登録結果を返す。"""
-    with db.locked():
-        q = questions.ask(
-            conn,
-            issue=issue,
-            question=question,
-            options=options,
-            recommended=recommended,
-            impact=impact,
-            timeout_action=timeout_action,
-            session_id=session_id,
-        )
+    q = questions.ask(
+        conn,
+        issue=issue,
+        question=question,
+        options=options,
+        recommended=recommended,
+        impact=impact,
+        timeout_action=timeout_action,
+        session_id=session_id,
+    )
     notify.notify_question(q)
     return {
         "question_id": q.id,

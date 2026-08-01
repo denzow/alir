@@ -1,4 +1,4 @@
-"""DB 直列化(locked / run_locked)のテスト。"""
+"""DB のトランザクションとスレッド逃がしのテスト。"""
 
 from __future__ import annotations
 
@@ -11,20 +11,21 @@ from alir import db, questions
 
 
 def _ask(dbdir: Path) -> None:
-    with db.locked():
-        questions.ask(
-            db.connect(dbdir),
-            issue="denzow/alir#1",
-            question="q",
-            options=["a", "b"],
-            recommended="a",
-            impact="high",
-            timeout_action="keep_parked",
-        )
+    questions.ask(
+        db.connect(dbdir),
+        issue="denzow/alir#1",
+        question="q",
+        options=["a", "b"],
+        recommended="a",
+        impact="high",
+        timeout_action="keep_parked",
+    )
 
 
-def test_locked_serializes_concurrent_asks(tmp_path: Path) -> None:
+def test_concurrent_asks_get_unique_ids(tmp_path: Path) -> None:
+    """別接続からの同時登録でも採番が重複しない(iceql のトランザクションによる直列化)。"""
     dbdir = tmp_path / "data"
+    db.connect(dbdir)  # スキーマ初期化を先に済ませる
     threads = [threading.Thread(target=_ask, args=(dbdir,)) for _ in range(10)]
     for t in threads:
         t.start()
@@ -34,7 +35,43 @@ def test_locked_serializes_concurrent_asks(tmp_path: Path) -> None:
     assert [q.id for q in items] == list(range(1, 11))
 
 
-def test_run_locked_returns_value(tmp_path: Path) -> None:
+def test_transaction_rolls_back_on_error(tmp_path: Path) -> None:
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    try:
+        with db.transaction(conn):
+            conn.execute(
+                "INSERT INTO runs (id, issue, session_id, input_tokens, "
+                "cache_creation_tokens, cache_read_tokens, output_tokens, created_at) "
+                "VALUES (1, 'a#1', NULL, 1, 0, 0, 0, 't')"
+            )
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    cur = conn.execute("SELECT COUNT(*) FROM runs")
+    row = cur.fetchone()
+    assert row is not None
+    assert int(str(row[0])) == 0
+
+
+def test_transaction_joins_outer_transaction(tmp_path: Path) -> None:
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    with db.transaction(conn):
+        _ask_with_conn = questions.ask(
+            conn,
+            issue="denzow/alir#1",
+            question="q",
+            options=["a", "b"],
+            recommended="a",
+            impact="high",
+            timeout_action="keep_parked",
+        )
+        assert conn.in_transaction
+    assert _ask_with_conn.id == 1
+
+
+def test_run_in_thread_returns_value(tmp_path: Path) -> None:
     dbdir = tmp_path / "data"
 
     async def main() -> int:
@@ -42,6 +79,6 @@ def test_run_locked_returns_value(tmp_path: Path) -> None:
             db.connect(dbdir)
             return 42
 
-        return await db.run_locked(work)
+        return await db.run_in_thread(work)
 
     assert anyio.run(main) == 42

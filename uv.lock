@@ -31,7 +31,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "iceql", specifier = ">=0.1.2" },
+    { name = "iceql", specifier = ">=0.2.0" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "uvicorn", specifier = ">=0.52.0" },
@@ -395,16 +395,16 @@ wheels = [
 
 [[package]]
 name = "iceql"
-version = "0.1.2"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "pyyaml" },
     { name = "sqlglot" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/51/29eead0a80917b8cf701a8e39efed7a61197b976761556b6b761c144dea4/iceql-0.1.2.tar.gz", hash = "sha256:68e0e75163761dc654a156f63ad8a910a0f1678cb43f981f61518add84c734b1", size = 26607, upload-time = "2026-07-29T14:54:33.524Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/2e/b0fb478823d368b692c59444f810b8f39ef6a205b350e9bd225d09181315/iceql-0.2.0.tar.gz", hash = "sha256:da1e36098d5c2355cfd8d91abc4b00cce94b195af4453b7ea428c1b91b9adcb1", size = 29239, upload-time = "2026-07-31T14:42:18.504Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/ab/6c4e60f5412a39c6b859928818f62df3a2f8412535e1cf1929346c5fc6f2/iceql-0.1.2-py3-none-any.whl", hash = "sha256:ade39fdf419784300eb2d84169e304aa1488ce420b04723885289ae0aa7646cb", size = 34679, upload-time = "2026-07-29T14:54:32.55Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/ef/e3f5e9e26c660be9742bd09e07e4baec999be4d9c7aa71d6e88d8aa9da33/iceql-0.2.0-py3-none-any.whl", hash = "sha256:9525d2df3a96c526956224f993e4f4994b32d1911ac8e2c3734765bce5ace1c8", size = 38214, upload-time = "2026-07-31T14:42:17.602Z" },
 ]
 
 [[package]]

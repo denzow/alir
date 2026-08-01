@@ -13,6 +13,8 @@ from typing import Any
 
 import iceql
 
+from alir import db
+
 WINDOW_SESSION = timedelta(hours=5)
 WINDOW_WEEKLY = timedelta(days=7)
 
@@ -39,6 +41,18 @@ def record_run(
     now: datetime | None = None,
 ) -> None:
     """claude -p の結果 JSON の usage を 1 行として記録する。"""
+    with db.transaction(conn):
+        _insert_run(conn, issue_ref=issue_ref, session_id=session_id, usage=usage, now=now)
+
+
+def _insert_run(
+    conn: iceql.Connection,
+    *,
+    issue_ref: str,
+    session_id: str | None,
+    usage: dict[str, Any],
+    now: datetime | None,
+) -> None:
     cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM runs")
     row = cur.fetchone()
     assert row is not None

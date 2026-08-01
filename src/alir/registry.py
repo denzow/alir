@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 
 import iceql
 
+from alir import db
+
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_PARKED = "parked"
@@ -88,24 +90,25 @@ def add(
 ) -> Issue:
     """Issue を queued として登録する。同じ URL の未完了 Issue があれば拒否する。"""
     repo, number = parse_issue_url(url)
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM issues WHERE url = ? AND status IN (?, ?, ?)",
-        (url, STATUS_QUEUED, STATUS_RUNNING, STATUS_PARKED),
-    )
-    row = cur.fetchone()
-    assert row is not None
-    if int(str(row[0])) > 0:
-        raise RegistryError(f"issue already registered and not finished: {url}")
+    with db.transaction(conn):
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM issues WHERE url = ? AND status IN (?, ?, ?)",
+            (url, STATUS_QUEUED, STATUS_RUNNING, STATUS_PARKED),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        if int(str(row[0])) > 0:
+            raise RegistryError(f"issue already registered and not finished: {url}")
 
-    cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM issues")
-    row = cur.fetchone()
-    assert row is not None
-    iid = int(str(row[0])) + 1
-    now = _now()
-    conn.execute(
-        f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (iid, url, repo, number, workdir, priority, STATUS_QUEUED, None, None, now, now),
-    )
+        cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM issues")
+        row = cur.fetchone()
+        assert row is not None
+        iid = int(str(row[0])) + 1
+        now = _now()
+        conn.execute(
+            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (iid, url, repo, number, workdir, priority, STATUS_QUEUED, None, None, now, now),
+        )
     return get(conn, iid)
 
 
@@ -147,15 +150,16 @@ def set_status(
     """Issue の状態を更新する。session_id と branch は指定されたときだけ上書きする。"""
     if status not in STATUSES:
         raise RegistryError(f"status must be one of {STATUSES}")
-    issue = get(conn, iid)
-    conn.execute(
-        "UPDATE issues SET status = ?, session_id = ?, branch = ?, updated_at = ? WHERE id = ?",
-        (
-            status,
-            session_id if session_id is not None else issue.session_id,
-            branch if branch is not None else issue.branch,
-            _now(),
-            iid,
-        ),
-    )
+    with db.transaction(conn):
+        issue = get(conn, iid)
+        conn.execute(
+            "UPDATE issues SET status = ?, session_id = ?, branch = ?, updated_at = ? WHERE id = ?",
+            (
+                status,
+                session_id if session_id is not None else issue.session_id,
+                branch if branch is not None else issue.branch,
+                _now(),
+                iid,
+            ),
+        )
     return get(conn, iid)

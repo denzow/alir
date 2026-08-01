@@ -97,7 +97,7 @@ async def index(request: Request) -> HTMLResponse:
     def work() -> list[Question]:
         return questions.list_questions(db.connect(dbdir), status=status)
 
-    items = await db.run_locked(work)
+    items = await db.run_in_thread(work)
     error = request.query_params.get("error")
     return HTMLResponse(_render_page(items, show_all=show_all, error=error))
 
@@ -117,7 +117,7 @@ async def answer_question(request: Request) -> RedirectResponse:
         questions.answer(db.connect(dbdir), qid, choice, note=note)
 
     try:
-        await db.run_locked(work)
+        await db.run_in_thread(work)
     except QuestionError as exc:
         from urllib.parse import quote
 

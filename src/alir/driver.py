@@ -181,51 +181,44 @@ def process_issue(
     worktree: WorktreeSetup = setup_worktree,
     skip_permissions: bool = False,
 ) -> Issue:
-    """Issue を 1 件処理し、最終状態の Issue を返す。
-
-    claude の実行中(runner 呼び出し中)は DB ロックを持たない。
-    """
-    with db.locked():
-        conn = db.connect(dbdir)
-        issue = registry.get(conn, iid)
-        registry.set_status(conn, iid, registry.STATUS_RUNNING)
-        answered = [
-            q
-            for q in questions.list_questions(conn, status=None)
-            if q.issue == issue.ref and q.answer is not None
-        ]
+    """Issue を 1 件処理し、最終状態の Issue を返す。"""
+    conn = db.connect(dbdir)
+    issue = registry.get(conn, iid)
+    registry.set_status(conn, iid, registry.STATUS_RUNNING)
+    answered = [
+        q
+        for q in questions.list_questions(conn, status=None)
+        if q.issue == issue.ref and q.answer is not None
+    ]
     try:
         path, branch = worktree(issue)
         prompt = build_prompt(issue, branch, answers=answered)
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
-        with db.locked():
-            registry.set_status(db.connect(dbdir), iid, registry.STATUS_FAILED)
+        registry.set_status(db.connect(dbdir), iid, registry.STATUS_FAILED)
         raise
 
-    with db.locked():
-        conn = db.connect(dbdir)
-        if result.usage:
-            usage.record_run(
-                conn, issue_ref=issue.ref, session_id=result.session_id, usage=result.usage
-            )
-        if result.rate_limited:
-            registry.set_status(
-                conn, iid, registry.STATUS_QUEUED, session_id=result.session_id, branch=branch
-            )
-            raise RateLimited(f"issue #{iid} hit a rate limit; requeued")
-
-        has_open_question = any(
-            q.issue == issue.ref
-            for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
+    conn = db.connect(dbdir)
+    if result.usage:
+        usage.record_run(
+            conn, issue_ref=issue.ref, session_id=result.session_id, usage=result.usage
         )
-        if has_open_question:
-            status = registry.STATUS_PARKED
-        elif result.exit_code != 0:
-            status = registry.STATUS_FAILED
-        else:
-            status = registry.STATUS_DONE
-        return registry.set_status(conn, iid, status, session_id=result.session_id, branch=branch)
+    if result.rate_limited:
+        registry.set_status(
+            conn, iid, registry.STATUS_QUEUED, session_id=result.session_id, branch=branch
+        )
+        raise RateLimited(f"issue #{iid} hit a rate limit; requeued")
+
+    has_open_question = any(
+        q.issue == issue.ref for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
+    )
+    if has_open_question:
+        status = registry.STATUS_PARKED
+    elif result.exit_code != 0:
+        status = registry.STATUS_FAILED
+    else:
+        status = registry.STATUS_DONE
+    return registry.set_status(conn, iid, status, session_id=result.session_id, branch=branch)
 
 
 def run_loop(
@@ -252,20 +245,21 @@ def run_loop(
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:
-            with db.locked():
-                conn = db.connect(dbdir)
-                for q in resume.expire_timeouts(conn, timeout=question_timeout):
-                    log(f"question #{q.id} expired: proceeding with recommended")
-                for requeued in resume.requeue_answered(conn):
-                    log(f"requeue #{requeued.id} {requeued.ref}")
-                paused = usage.pause_reason(conn, budget) if budget is not None else None
+            conn = db.connect(dbdir)
+            for q in resume.expire_timeouts(conn, timeout=question_timeout):
+                log(f"question #{q.id} expired: proceeding with recommended")
+            for requeued in resume.requeue_answered(conn):
+                log(f"requeue #{requeued.id} {requeued.ref}")
+            paused = usage.pause_reason(conn, budget) if budget is not None else None
             if paused:
                 log(f"pause: {paused}")
             in_backoff = time.monotonic() < backoff_until
 
             while not paused and not in_backoff and len(active) < parallel:
-                with db.locked():
-                    conn = db.connect(dbdir)
+                conn = db.connect(dbdir)
+                # 取得と running への遷移を原子的に行い、
+                # 別プロセスのドライバとの二重取得を防ぐ
+                with db.transaction(conn):
                     issue = registry.next_queued(conn)
                     if issue is not None:
                         registry.set_status(conn, issue.id, registry.STATUS_RUNNING)

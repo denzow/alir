@@ -1,14 +1,12 @@
-"""iceql データベースへの接続とスキーマ初期化、書き込みの直列化。
+"""iceql データベースへの接続とスキーマ初期化、トランザクション補助。
 
-iceql は同期 API でファイルロックを持たないため、
-プロセス内の並行アクセス(Web ハンドラ・MCP ツール・ドライバスレッド)は
-locked() / run_locked() で直列化する。プロセスをまたぐ排他は提供しない
-(ワンプロセス運用の alir serve を推奨する理由のひとつ)。
+書き込みの直列化は iceql 0.2.0 の 2 段ロック(BEGIN で DB 全体の write ロックを
+取得し COMMIT まで保持)に委ねる。プロセス内の別接続もプロセス間も直列化される。
+採番を含む read-modify-write はドメイン層が transaction() で囲んで原子的にする。
 """
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,8 +14,6 @@ from typing import TypeVar
 
 import anyio.to_thread
 import iceql
-
-_LOCK = threading.RLock()
 
 T = TypeVar("T")
 
@@ -73,9 +69,10 @@ def connect(dbdir: Path) -> iceql.Connection:
     """データディレクトリに接続する。未初期化のテーブルがあれば作る。
 
     テーブルの有無は iceql のストレージ規約(テーブルごとの schema.yaml)で判定する。
+    timeout は他の書き手のロック解放を待つ秒数。
     """
     dbdir.mkdir(parents=True, exist_ok=True)
-    conn = iceql.connect(dbdir)
+    conn = iceql.connect(dbdir, timeout=30.0)
     for table, ddl in _DDLS.items():
         if not (dbdir / f"{table}.schema.yaml").exists():
             conn.execute(ddl)
@@ -83,17 +80,24 @@ def connect(dbdir: Path) -> iceql.Connection:
 
 
 @contextmanager
-def locked() -> Iterator[None]:
-    """DB 操作をプロセス内で直列化するロック。同期コードから使う。"""
-    with _LOCK:
+def transaction(conn: iceql.Connection) -> Iterator[None]:
+    """read-modify-write を原子的に行うトランザクション。
+
+    すでにトランザクション中ならそれに参加する(ネストしない)。
+    例外時はロールバックする。
+    """
+    if conn.in_transaction:
         yield
+        return
+    conn.execute("BEGIN")
+    try:
+        yield
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
 
 
-async def run_locked(fn: Callable[[], T]) -> T:
-    """DB 操作をワーカースレッドで、ロックを取って実行する。async ハンドラから使う。"""
-
-    def call() -> T:
-        with _LOCK:
-            return fn()
-
-    return await anyio.to_thread.run_sync(call)
+async def run_in_thread(fn: Callable[[], T]) -> T:
+    """同期の DB 操作をワーカースレッドで実行する。async ハンドラから使う。"""
+    return await anyio.to_thread.run_sync(fn)
