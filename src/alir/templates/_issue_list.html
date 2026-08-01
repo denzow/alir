@@ -1,16 +1,20 @@
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 {% for issue in items %}
-<div class="card">
-  <div class="meta">#{{ issue.id }} [{{ issue.status }}] priority: {{ issue.priority }}</div>
-  <p><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
-  <p class="meta">{{ issue.workdir }}</p>
+<div class="card st-{{ issue.status }}">
+  <div class="card-top">
+    <span class="status">{{ issue.status }}</span>
+    <span>#{{ issue.id }}</span>
+    <span>priority {{ issue.priority }}</span>
+  </div>
+  <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
+  <p class="workdir">{{ issue.workdir }}</p>
   {% if issue.status == "failed" %}
-  <form method="post" action="/issues/{{ issue.id }}/requeue"
+  <form class="requeue" method="post" action="/issues/{{ issue.id }}/requeue"
         hx-post="/issues/{{ issue.id }}/requeue" hx-target="#issues" hx-swap="innerHTML">
-    <button>再実行 (queued に戻す)</button>
+    <button>キューに戻して再実行</button>
   </form>
   {% endif %}
 </div>
 {% else %}
-<p>no issues</p>
+<p class="empty">登録された Issue はありません。<br>上のフォームから消化したい Issue を追加できます。</p>
 {% endfor %}

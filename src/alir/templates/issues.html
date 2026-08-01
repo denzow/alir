@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>alir issues</h1>
-<div class="card">
+<div class="page-head">
+  <h1>Issue キュー</h1>
+</div>
+<div class="card add-form">
   <form method="post" action="/issues/add"
         hx-post="/issues/add" hx-target="#issues" hx-swap="innerHTML">
     <input type="text" name="url" placeholder="https://github.com/owner/repo/issues/123">
     <input type="text" name="workdir" placeholder="対象リポジトリのローカルパス">
     <input type="text" name="priority" placeholder="優先度 (既定 0、大きいほど先)">
-    <button>登録</button>
+    <button>キューに登録</button>
   </form>
 </div>
 <div id="issues">

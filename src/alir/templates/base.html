@@ -2,33 +2,217 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>alir</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%23f0b445'/%3E%3C/svg%3E">
 <script src="/static/htmx.min.js"></script>
 <style>
-:root { color-scheme: light dark; }
-body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 0 auto; padding: 1rem; }
-h1 { font-size: 1.2rem; }
-nav a { margin-right: 1rem; }
-.card { border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-        border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-.meta { font-size: 0.85rem; opacity: 0.7; }
-.question { margin: 0.5rem 0; white-space: pre-wrap; }
-.options button { display: block; width: 100%; margin: 0.4rem 0; padding: 0.7rem;
-                  border-radius: 6px; border: 1px solid currentColor;
-                  background: none; color: inherit; font-size: 1rem; text-align: left; }
-.options button.recommended { border-width: 2px; font-weight: bold; }
-input[type=text] { width: 100%; box-sizing: border-box; padding: 0.6rem; margin: 0.4rem 0;
-                   border-radius: 6px; border: 1px solid currentColor;
-                   background: none; color: inherit; font-size: 1rem; }
-button { padding: 0.7rem 1rem; border-radius: 6px; border: 1px solid currentColor;
-         background: none; color: inherit; font-size: 1rem; }
-.answered { opacity: 0.6; }
-.error { color: #c00; }
+:root {
+  color-scheme: light dark;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --inset: #eceef1;
+  --text: #1a222c;
+  --muted: #63707e;
+  --line: #d9dee4;
+  --accent: #a06b00;
+  --accent-soft: rgba(176, 121, 10, 0.10);
+  --c-open: #b07914;
+  --c-answered: #2e8b57;
+  --c-queued: #3f7fbf;
+  --c-running: #1d9a9a;
+  --c-parked: #8a63c9;
+  --c-done: #2e8b57;
+  --c-failed: #c4434c;
+  --c-expired: #808a94;
+  --focus: #b0791a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1216;
+    --surface: #161c23;
+    --inset: #10151b;
+    --text: #e4eaf1;
+    --muted: #8a97a5;
+    --line: #232c36;
+    --accent: #f0b445;
+    --accent-soft: rgba(240, 180, 69, 0.09);
+    --c-open: #f0b445;
+    --c-answered: #5dc98a;
+    --c-queued: #64a8e8;
+    --c-running: #4fd1d1;
+    --c-parked: #b08ce8;
+    --c-done: #5dc98a;
+    --c-failed: #e8646c;
+    --c-expired: #6d7884;
+    --focus: #f0b445;
+  }
+}
+* { -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+.mono, code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+nav {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: baseline; gap: 1.4rem;
+  padding: 0.8rem max(1rem, env(safe-area-inset-left));
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-weight: 700; font-size: 1rem; letter-spacing: 0.02em;
+  color: var(--text); text-decoration: none;
+}
+.brand::after {
+  content: ""; display: inline-block; width: 0.45em; height: 0.45em;
+  margin-left: 0.28em; border-radius: 50%;
+  background: var(--accent); vertical-align: 0.08em;
+}
+nav .tab {
+  color: var(--muted); text-decoration: none; font-size: 0.9rem;
+  padding-bottom: 0.15rem; border-bottom: 2px solid transparent;
+}
+nav .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+nav .tab:hover { color: var(--text); }
+
+main { max-width: 41rem; margin: 0 auto; padding: 1.4rem 1rem 4rem; }
+h1 { font-size: 1.05rem; font-weight: 650; margin: 0.4rem 0 0.2rem; }
+.page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.page-head a { color: var(--muted); font-size: 0.82rem; text-decoration: none; }
+.page-head a:hover { color: var(--accent); }
+
+.card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--st, var(--line));
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin: 0.9rem 0;
+}
+.st-open { --st: var(--c-open); }
+.st-answered { --st: var(--c-answered); }
+.st-queued { --st: var(--c-queued); }
+.st-running { --st: var(--c-running); }
+.st-parked { --st: var(--c-parked); }
+.st-done { --st: var(--c-done); }
+.st-failed { --st: var(--c-failed); }
+.st-expired { --st: var(--c-expired); }
+
+.card-top {
+  display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.78rem; color: var(--muted);
+}
+.status {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  color: var(--st); font-weight: 600; letter-spacing: 0.03em;
+}
+.status::before {
+  content: ""; width: 0.5em; height: 0.5em; border-radius: 50%;
+  background: var(--st);
+}
+.st-running .status::before { animation: lamp 1.6s ease-in-out infinite; }
+@keyframes lamp { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .st-running .status::before { animation: none; }
+}
+
+.question { margin: 0.55rem 0 0.2rem; font-weight: 550; white-space: pre-wrap; }
+.card .detail {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.74rem; color: var(--muted); margin: 0 0 0.6rem;
+}
+
+input[type=text] {
+  width: 100%; box-sizing: border-box;
+  padding: 0.6rem 0.75rem; margin: 0.3rem 0;
+  border-radius: 8px; border: 1px solid var(--line);
+  background: var(--inset); color: var(--text); font-size: 1rem;
+}
+input[type=text]::placeholder { color: var(--muted); opacity: 0.8; }
+input[type=text]:focus { border-color: var(--accent); outline: none; }
+
+button {
+  border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text);
+  font-size: 1rem; padding: 0.65rem 1rem; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+.options button {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
+  width: 100%; margin: 0.45rem 0; text-align: left;
+  background: var(--inset);
+}
+.options button:hover { background: var(--accent-soft); }
+.options button.recommended { border-color: var(--accent); }
+.tag {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--accent); background: var(--accent-soft);
+  border-radius: 999px; padding: 0.1rem 0.55rem; white-space: nowrap;
+}
+.free { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.free input { flex: 1; margin: 0; }
+.free button { white-space: nowrap; font-size: 0.88rem; }
+
+.answer-block {
+  background: var(--inset); border-radius: 8px;
+  padding: 0.6rem 0.8rem; margin-top: 0.5rem;
+}
+.answer-block .label {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.7rem; color: var(--muted); letter-spacing: 0.05em;
+}
+.answer-block .note { color: var(--muted); font-size: 0.85rem; }
+
+.issue-ref { font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.95rem; font-weight: 600; margin: 0.45rem 0 0.1rem; }
+.issue-ref a { color: var(--text); text-decoration: none; border-bottom: 1px solid var(--line); }
+.issue-ref a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+.workdir {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.74rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0;
+}
+.requeue { margin-top: 0.6rem; }
+.requeue button { font-size: 0.88rem; }
+
+.add-form { --st: var(--line); }
+.add-form button { margin-top: 0.3rem; }
+
+.empty {
+  text-align: center; color: var(--muted);
+  padding: 3.2rem 1rem; font-size: 0.9rem;
+}
+.error {
+  color: var(--c-failed);
+  border: 1px solid color-mix(in srgb, var(--c-failed) 40%, transparent);
+  background: color-mix(in srgb, var(--c-failed) 8%, transparent);
+  border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.88rem;
+}
 </style>
 </head>
 <body>
-<nav><a href="/">questions</a><a href="/issues">issues</a></nav>
+<nav>
+  <a class="brand" href="/">alir</a>
+  <a class="tab {% if request.url.path == '/' %}active{% endif %}" href="/">questions</a>
+  <a class="tab {% if request.url.path.startswith('/issues') %}active{% endif %}" href="/issues">issues</a>
+</nav>
+<main>
 {% block content %}{% endblock %}
+</main>
 </body>
 </html>

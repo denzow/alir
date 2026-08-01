@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>alir questions</h1>
-<p>
-  {% if show_all %}<a href="/">未回答のみ</a>{% else %}<a href="/?all=1">すべて表示</a>{% endif %}
-</p>
+<div class="page-head">
+  <h1>{% if show_all %}すべての質問{% else %}未回答の質問{% endif %}</h1>
+  {% if show_all %}<a href="/">未回答のみ表示</a>{% else %}<a href="/?all=1">すべて表示</a>{% endif %}
+</div>
 <div id="questions">
 {% include "_question_list.html" %}
 </div>

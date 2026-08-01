@@ -37,14 +37,15 @@ def _ask(dbdir: Path) -> None:
 def test_index_empty(client: TestClient) -> None:
     res = client.get("/")
     assert res.status_code == 200
-    assert "no questions" in res.text
+    assert "未回答の質問はありません" in res.text
 
 
 def test_index_shows_open_question(client: TestClient, dbdir: Path) -> None:
     _ask(dbdir)
     res = client.get("/")
     assert "DB スキーマを変更してよいか" in res.text
-    assert "変更する (推奨)" in res.text
+    assert "変更する" in res.text
+    assert "推奨" in res.text
 
 
 def test_answer_by_option_button(client: TestClient, dbdir: Path) -> None:
@@ -53,7 +54,7 @@ def test_answer_by_option_button(client: TestClient, dbdir: Path) -> None:
         "/questions/1/answer", data={"choice": "2", "note": "今回は見送り"}, follow_redirects=True
     )
     assert res.status_code == 200
-    assert "no questions" in res.text
+    assert "未回答の質問はありません" in res.text
 
     conn = db.connect(dbdir)
     q = questions.get(conn, 1)
@@ -80,8 +81,8 @@ def test_answered_question_visible_with_all(client: TestClient, dbdir: Path) -> 
     _ask(dbdir)
     client.post("/questions/1/answer", data={"choice": "1"})
     res = client.get("/?all=1")
-    assert "[answered]" in res.text
-    assert "A: 変更する" in res.text
+    assert "st-answered" in res.text
+    assert "変更する" in res.text
 
 
 URL = "https://github.com/denzow/alir/issues/12"
@@ -90,7 +91,7 @@ URL = "https://github.com/denzow/alir/issues/12"
 def test_issues_page_empty(client: TestClient) -> None:
     res = client.get("/issues")
     assert res.status_code == 200
-    assert "no issues" in res.text
+    assert "登録された Issue はありません" in res.text
 
 
 def test_issues_add_and_list(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
@@ -103,7 +104,7 @@ def test_issues_add_and_list(client: TestClient, dbdir: Path, tmp_path: Path) ->
     )
     assert res.status_code == 200
     assert "denzow/alir#12" in res.text
-    assert "[queued]" in res.text
+    assert "st-queued" in res.text
 
     from alir import registry
 
@@ -140,7 +141,7 @@ def test_issues_requeue_failed(client: TestClient, dbdir: Path, tmp_path: Path) 
     registry.set_status(conn, issue.id, registry.STATUS_FAILED)
 
     res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
-    assert "[queued]" in res.text
+    assert "st-queued" in res.text
 
     conn = db.connect(dbdir)
     assert registry.get(conn, issue.id).status == registry.STATUS_QUEUED
@@ -165,7 +166,7 @@ def test_htmx_answer_returns_fragment(client: TestClient, dbdir: Path) -> None:
     )
     assert res.status_code == 200
     assert "<html" not in res.text
-    assert "no questions" in res.text
+    assert "未回答の質問はありません" in res.text
 
 
 def test_htmx_answer_error_shown_in_fragment(client: TestClient, dbdir: Path) -> None:

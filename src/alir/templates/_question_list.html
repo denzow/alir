@@ -1,30 +1,41 @@
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 {% for q in items %}
-<div class="card">
-  <div class="meta">#{{ q.id }} [{{ q.status }}] {{ q.issue }}
-    (impact: {{ q.impact }}, timeout: {{ q.timeout_action }})</div>
+<div class="card st-{{ q.status }}">
+  <div class="card-top">
+    <span class="status">{{ q.status }}</span>
+    <span>#{{ q.id }}</span>
+    <span>{{ q.issue }}</span>
+  </div>
   <p class="question">{{ q.question }}</p>
+  <p class="detail">impact {{ q.impact }} · timeout {{ q.timeout_action }}
+    · {{ q.created_at[:16] | replace("T", " ") }}</p>
   {% if q.status == "open" %}
   <form method="post" action="/questions/{{ q.id }}/answer"
         hx-post="/questions/{{ q.id }}/answer" hx-target="#questions" hx-swap="innerHTML">
     <input type="hidden" name="show_all" value="{{ '1' if show_all else '' }}">
-    <input type="text" name="note" placeholder="補足(任意)">
     <div class="options">
       {% for option in q.options %}
       <button name="choice" value="{{ loop.index }}"
               {% if option == q.recommended %}class="recommended"{% endif %}>
-        {{- option }}{% if option == q.recommended %} (推奨){% endif %}</button>
+        <span>{{ option }}</span>
+        {% if option == q.recommended %}<span class="tag">推奨</span>{% endif %}
+      </button>
       {% endfor %}
     </div>
+    <input type="text" name="note" placeholder="補足があれば入力 (任意)">
     <div class="free">
       <input type="text" name="free" placeholder="自由記述で回答">
-      <button name="choice" value="free">自由記述で回答</button>
+      <button name="choice" value="free">回答する</button>
     </div>
   </form>
   {% else %}
-  <p class="answered">A: {{ q.answer }}{% if q.answer_note %} ({{ q.answer_note }}){% endif %}</p>
+  <div class="answer-block">
+    <span class="label">answer</span>
+    <div>{{ q.answer }}</div>
+    {% if q.answer_note %}<div class="note">{{ q.answer_note }}</div>{% endif %}
+  </div>
   {% endif %}
 </div>
 {% else %}
-<p>no questions</p>
+<p class="empty">未回答の質問はありません。<br>エージェントが判断を求めるとここに届きます。</p>
 {% endfor %}
