@@ -18,3 +18,19 @@
 {% else %}
 <p class="empty">実行中のセッションはありません。<br>ドライバが Issue を開始するとここに表示されます。</p>
 {% endfor %}
+{% if recent_reports %}
+<h2 class="section-label">直近の報告</h2>
+{% for report in recent_reports %}
+<div class="card {{ 'st-open' if report.outcome == 'refined' else 'st-done' }}">
+  <div class="card-top">
+    <span class="status">{{ report.outcome }}</span>
+    <span>{{ report.issue }}</span>
+    <span>{{ report.created_at | localtime }}</span>
+  </div>
+  <p class="report-summary">{{ report.summary }}</p>
+  {% if report.pr_url %}
+  <p class="issue-ref"><a href="{{ report.pr_url }}">{{ report.pr_url | replace("https://github.com/", "") }}</a></p>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}

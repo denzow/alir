@@ -229,7 +229,7 @@ async def sessions_index(request: Request) -> Response:
                     "elapsed_min": int((now - started).total_seconds() // 60),
                 }
             )
-        return {"sessions": sessions}
+        return {"sessions": sessions, "recent_reports": reports.list_reports(conn, limit=5)}
 
     context = await db.run_in_thread(work)
     return _render(request, "sessions.html", context, fragment="_session_list.html")

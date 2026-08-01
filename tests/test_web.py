@@ -404,3 +404,24 @@ def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
     res = client.get("/loop")
     assert "week (Fable)" in res.text
     assert "54%" in res.text
+
+
+def test_sessions_page_shows_recent_reports(client: TestClient, dbdir: Path) -> None:
+    from alir import reports
+
+    conn = db.connect(dbdir)
+    for i in range(6):
+        reports.add(conn, issue=f"denzow/alir#{i}", summary=f"報告{i}")
+    reports.add(
+        conn,
+        issue="denzow/alir#9",
+        summary="リファインメント実施",
+        outcome="refined",
+        pr_url=None,
+    )
+    res = client.get("/sessions")
+    assert "直近の報告" in res.text
+    assert "リファインメント実施" in res.text
+    assert "報告5" in res.text
+    assert "報告1" not in res.text  # 直近 5 件に含まれない
+    assert "st-open" in res.text  # refined はアンバー表示

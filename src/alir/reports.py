@@ -22,6 +22,9 @@ OUTCOME_IMPLEMENTED = "implemented"
 OUTCOME_REFINED = "refined"
 OUTCOMES = (OUTCOME_IMPLEMENTED, OUTCOME_REFINED)
 
+# reports テーブルに残す直近件数。超えた分は登録時に削除する。
+MAX_REPORTS = 30
+
 
 @dataclass(frozen=True)
 class Report:
@@ -63,6 +66,7 @@ def add(
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (rid, issue, summary.strip(), pr_url, session_id, now, outcome),
         )
+        conn.execute("DELETE FROM reports WHERE id <= ?", (rid - MAX_REPORTS,))
     return Report(
         id=rid,
         issue=issue,

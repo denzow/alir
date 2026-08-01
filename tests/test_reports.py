@@ -75,3 +75,11 @@ def test_default_outcome_is_implemented(conn) -> None:  # type: ignore[no-untype
 def test_add_rejects_unknown_outcome(conn) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ReportError):
         reports.add(conn, issue="denzow/alir#1", summary="x", outcome="paused")
+
+
+def test_rotation_keeps_recent_reports(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(reports, "MAX_REPORTS", 3)
+    for i in range(5):
+        reports.add(conn, issue="denzow/alir#1", summary=f"r{i}")
+    items = reports.list_reports(conn)
+    assert [r.summary for r in items] == ["r4", "r3", "r2"]
