@@ -217,6 +217,12 @@ button:hover { border-color: var(--accent); }
   padding: 3.2rem 1rem; font-size: 0.9rem;
 }
 .loop-note { color: var(--muted); font-size: 0.88rem; margin: 0.5rem 0 0.7rem; }
+.hint { color: var(--muted); font-size: 0.8rem; line-height: 1.7; }
+.hint code {
+  font-size: 0.76rem; background: var(--inset);
+  border-radius: 4px; padding: 0.05rem 0.3rem;
+}
+.saved { color: var(--c-answered); font-size: 0.88rem; }
 .report {
   background: var(--inset); border-radius: 8px;
   padding: 0.55rem 0.8rem; margin-top: 0.55rem; font-size: 0.88rem;
@@ -253,6 +259,7 @@ button:hover { border-color: var(--accent); }
   <a class="tab {% if request.url.path.startswith('/issues') %}active{% endif %}" href="/issues">issues</a>
   <a class="tab {% if request.url.path.startswith('/sessions') %}active{% endif %}" href="/sessions">sessions</a>
   <a class="tab {% if request.url.path.startswith('/loop') %}active{% endif %}" href="/loop">loop</a>
+  <a class="tab {% if request.url.path.startswith('/settings') %}active{% endif %}" href="/settings">settings</a>
 </nav>
 <main>
 {% block content %}{% endblock %}

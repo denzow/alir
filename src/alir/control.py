@@ -32,7 +32,8 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _set(conn: iceql.Connection, key: str, value: str) -> None:
+def set_value(conn: iceql.Connection, key: str, value: str) -> None:
+    """control テーブルの KV を設定する。設定値の保存にも使う。"""
     with db.transaction(conn):
         cur = conn.execute("SELECT COUNT(*) FROM control WHERE key = ?", (key,))
         row = cur.fetchone()
@@ -43,7 +44,8 @@ def _set(conn: iceql.Connection, key: str, value: str) -> None:
             conn.execute("INSERT INTO control (key, value) VALUES (?, ?)", (key, value))
 
 
-def _get(conn: iceql.Connection, key: str) -> str | None:
+def get_value(conn: iceql.Connection, key: str) -> str | None:
+    """control テーブルの KV を取得する。未設定なら None。"""
     cur = conn.execute("SELECT value FROM control WHERE key = ?", (key,))
     row = cur.fetchone()
     return None if row is None else str(row[0])
@@ -51,20 +53,20 @@ def _get(conn: iceql.Connection, key: str) -> str | None:
 
 def set_paused(conn: iceql.Connection, paused: bool) -> None:
     """新規実行の一時停止フラグを設定する。"""
-    _set(conn, KEY_PAUSED, "1" if paused else "0")
+    set_value(conn, KEY_PAUSED, "1" if paused else "0")
 
 
 def is_paused(conn: iceql.Connection) -> bool:
-    return _get(conn, KEY_PAUSED) == "1"
+    return get_value(conn, KEY_PAUSED) == "1"
 
 
 def heartbeat(conn: iceql.Connection) -> None:
     """ドライバの生存時刻を記録する。各サイクルの先頭で呼ぶ。"""
-    _set(conn, KEY_HEARTBEAT, _now().isoformat(timespec="seconds"))
+    set_value(conn, KEY_HEARTBEAT, _now().isoformat(timespec="seconds"))
 
 
 def heartbeat_at(conn: iceql.Connection) -> datetime | None:
-    value = _get(conn, KEY_HEARTBEAT)
+    value = get_value(conn, KEY_HEARTBEAT)
     return None if value is None else datetime.fromisoformat(value)
 
 

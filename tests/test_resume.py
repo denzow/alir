@@ -108,8 +108,8 @@ def test_run_loop_requeues_and_processes_answered_parked(dbdir: Path) -> None:
         prompts.append(prompt)
         return RunResult(exit_code=0, session_id="sess-2", output="ok")
 
-    def worktree(issue: registry.Issue) -> tuple[Path, str]:
-        return Path("/tmp/wt"), "alir/issue-12"
+    def worktree(issue: registry.Issue, branch: str) -> Path:
+        return Path("/tmp/wt")
 
     driver.run_loop(dbdir, once=True, runner=runner, worktree=worktree, log=lambda _: None)
     conn = db.connect(dbdir)

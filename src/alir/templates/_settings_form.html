@@ -1,0 +1,21 @@
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if saved %}<p class="saved">保存しました。次に開始するセッションから使われます。</p>{% endif %}
+<div class="card add-form">
+  <form method="post" action="/settings"
+        hx-post="/settings" hx-target="#settings" hx-swap="innerHTML">
+    <div class="field">
+      <label for="branch-template">ブランチ名</label>
+      <input id="branch-template" type="text" name="branch_template"
+             value="{{ branch_template }}">
+    </div>
+    <p class="hint">
+      使える変数: <code>{number}</code> = Issue 番号 /
+      <code>{id}</code> = alir の Issue ID /
+      <code>{repo}</code> = リポジトリ名。
+      一意になるよう <code>{number}</code> か <code>{id}</code> を必ず含める。
+      既定は <code>alir/issue-{number}</code>。
+      再開時は前回のブランチ名をそのまま使う。
+    </p>
+    <button>保存する</button>
+  </form>
+</div>

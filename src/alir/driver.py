@@ -20,7 +20,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from alir import control, db, questions, registry, resume, usage
+from alir import control, db, questions, registry, resume, settings, usage
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -48,7 +48,7 @@ class RunResult:
 
 
 Runner = Callable[..., RunResult]
-WorktreeSetup = Callable[[Issue], tuple[Path, str]]
+WorktreeSetup = Callable[[Issue, str], Path]
 
 
 def _git(workdir: Path, *args: str) -> str:
@@ -85,8 +85,8 @@ def _default_branch_ref(workdir: Path) -> str | None:
     return None
 
 
-def setup_worktree(issue: Issue) -> tuple[Path, str]:
-    """Issue 用の worktree とブランチを用意し、(パス, ブランチ名) を返す。
+def setup_worktree(issue: Issue, branch: str) -> Path:
+    """Issue 用の worktree と指定のブランチを用意し、worktree のパスを返す。
 
     worktree は対象リポジトリの隣(<repo>-alir/issue-<n>)に置く。
     すでに存在すればそのまま再利用する(park からの再開)。
@@ -94,14 +94,13 @@ def setup_worktree(issue: Issue) -> tuple[Path, str]:
     最新化し、その先端を基点にする。workdir のチェックアウトは変更しない。
     """
     workdir = Path(issue.workdir)
-    branch = f"alir/issue-{issue.number}"
     path = workdir.parent / f"{workdir.name}-alir" / f"issue-{issue.number}"
     if path.exists():
-        return path, branch
+        return path
     path.parent.mkdir(parents=True, exist_ok=True)
     if _git(workdir, "branch", "--list", branch).strip():
         _git(workdir, "worktree", "add", str(path), branch)
-        return path, branch
+        return path
 
     base = _default_branch_ref(workdir)
     if base is not None and base.startswith("origin/"):
@@ -112,7 +111,7 @@ def setup_worktree(issue: Issue) -> tuple[Path, str]:
     if base is not None:
         args.append(base)
     _git(workdir, *args)
-    return path, branch
+    return path
 
 
 def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]) -> str:
@@ -225,7 +224,11 @@ def process_issue(
     worktree: WorktreeSetup = setup_worktree,
     skip_permissions: bool = False,
 ) -> Issue:
-    """Issue を 1 件処理し、最終状態の Issue を返す。"""
+    """Issue を 1 件処理し、最終状態の Issue を返す。
+
+    ブランチ名は初回はテンプレート(settings)から作り、
+    再開時は前回のブランチをそのまま使う。
+    """
     conn = db.connect(dbdir)
     issue = registry.get(conn, iid)
     registry.set_status(conn, iid, registry.STATUS_RUNNING)
@@ -234,8 +237,9 @@ def process_issue(
         for q in questions.list_questions(conn, status=None)
         if q.issue == issue.ref and q.answer is not None
     ]
+    branch = issue.branch or settings.render_branch(settings.branch_template(conn), issue)
     try:
-        path, branch = worktree(issue)
+        path = worktree(issue, branch)
         prompt = build_prompt(issue, branch, answers=answered)
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:

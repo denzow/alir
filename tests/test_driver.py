@@ -22,8 +22,8 @@ def _add_issue(dbdir: Path) -> registry.Issue:
     return registry.add(conn, url=URL, workdir="/tmp/alir")
 
 
-def _fake_worktree(issue: registry.Issue) -> tuple[Path, str]:
-    return Path("/tmp/worktree"), f"alir/issue-{issue.number}"
+def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
+    return Path("/tmp/worktree")
 
 
 def _runner(result: RunResult):  # type: ignore[no-untyped-def]
@@ -74,7 +74,7 @@ def test_process_issue_parked_when_question_open(dbdir: Path) -> None:
 def test_process_issue_failed_when_worktree_setup_raises(dbdir: Path) -> None:
     issue = _add_issue(dbdir)
 
-    def broken_worktree(issue: registry.Issue) -> tuple[Path, str]:
+    def broken_worktree(issue: registry.Issue, branch: str) -> Path:
         raise driver.DriverError("no such repo")
 
     runner = _runner(RunResult(exit_code=0, session_id=None, output=""))
@@ -184,8 +184,7 @@ def test_setup_worktree_bases_on_latest_default_branch(tmp_path: Path) -> None:
     _run_git(seed, "push", str(origin), "main")
     latest = _run_git(seed, "rev-parse", "HEAD")
 
-    path, branch = driver.setup_worktree(_make_issue(work))
-    assert branch == "alir/issue-12"
+    path = driver.setup_worktree(_make_issue(work), "alir/issue-12")
     assert _run_git(path, "rev-parse", "HEAD") == latest
 
 
@@ -203,5 +202,43 @@ def test_setup_worktree_without_remote_uses_local_default(tmp_path: Path) -> Non
     _run_git(work, "commit", "-m", "wip commit")
     main_rev = _run_git(work, "rev-parse", "main")
 
-    path, _branch = driver.setup_worktree(_make_issue(work))
+    path = driver.setup_worktree(_make_issue(work), "alir/issue-12")
     assert _run_git(path, "rev-parse", "HEAD") == main_rev
+
+
+def test_process_issue_uses_branch_template(dbdir: Path) -> None:
+    from alir import settings
+
+    conn = db.connect(dbdir)
+    settings.set_branch_template(conn, "feature/{repo}-{number}")
+    issue = _add_issue(dbdir)
+
+    captured: dict[str, str] = {}
+
+    def worktree(issue: registry.Issue, branch: str) -> Path:
+        captured["branch"] = branch
+        return Path("/tmp/wt")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
+    assert captured["branch"] == "feature/alir-12"
+    assert finished.branch == "feature/alir-12"
+
+
+def test_process_issue_reuses_stored_branch(dbdir: Path) -> None:
+    from alir import settings
+
+    issue = _add_issue(dbdir)
+    conn = db.connect(dbdir)
+    registry.set_status(conn, issue.id, registry.STATUS_QUEUED, branch="old-branch")
+    settings.set_branch_template(conn, "feature/{repo}-{number}")
+
+    captured: dict[str, str] = {}
+
+    def worktree(issue: registry.Issue, branch: str) -> Path:
+        captured["branch"] = branch
+        return Path("/tmp/wt")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
+    assert captured["branch"] == "old-branch"

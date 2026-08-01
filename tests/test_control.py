@@ -51,8 +51,8 @@ def test_log_event_rotates(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert [e.message for e in events] == ["e4", "e3", "e2"]
 
 
-def _fake_worktree(issue: registry.Issue) -> tuple[Path, str]:
-    return Path("/tmp/wt"), f"alir/issue-{issue.number}"
+def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
+    return Path("/tmp/wt")
 
 
 def test_run_loop_respects_manual_pause(dbdir: Path) -> None:

@@ -362,3 +362,35 @@ def test_sessions_page_shows_running_with_progress(
     res = client.get("/sessions", headers={"HX-Request": "true"})
     assert "<html" not in res.text
     assert "調査完了、実装に着手" in res.text
+
+
+def test_settings_page_shows_current_template(client: TestClient, dbdir: Path) -> None:
+    res = client.get("/settings")
+    assert res.status_code == 200
+    assert 'value="alir/issue-{number}"' in res.text
+
+
+def test_settings_save_valid_template(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings",
+        data={"branch_template": "feature/{repo}-{number}"},
+        headers={"HX-Request": "true"},
+    )
+    assert "保存しました" in res.text
+    conn = db.connect(dbdir)
+    assert settings.branch_template(conn) == "feature/{repo}-{number}"
+
+
+def test_settings_save_invalid_template_keeps_current(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings",
+        data={"branch_template": "static-name"},
+        headers={"HX-Request": "true"},
+    )
+    assert "must contain" in res.text
+    conn = db.connect(dbdir)
+    assert settings.branch_template(conn) == "alir/issue-{number}"

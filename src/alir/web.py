@@ -17,9 +17,10 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, progress, questions, registry, reports
+from alir import control, db, progress, questions, registry, reports, settings
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
+from alir.settings import SettingsError
 
 _BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=_BASE / "templates")
@@ -231,6 +232,39 @@ async def sessions_index(request: Request) -> Response:
 
     context = await db.run_in_thread(work)
     return _render(request, "sessions.html", context, fragment="_session_list.html")
+
+
+@router.get("/settings")
+async def settings_index(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    template = await db.run_in_thread(lambda: settings.branch_template(db.connect(dbdir)))
+    context = {
+        "branch_template": template,
+        "saved": False,
+        "error": request.query_params.get("error"),
+    }
+    return _render(request, "settings.html", context, fragment="_settings_form.html")
+
+
+@router.post("/settings")
+async def settings_save(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    template = str(form.get("branch_template") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(lambda: settings.set_branch_template(db.connect(dbdir), template))
+    except SettingsError as exc:
+        error = str(exc)
+
+    current = await db.run_in_thread(lambda: settings.branch_template(db.connect(dbdir)))
+    if _is_htmx(request):
+        context = {"branch_template": current, "saved": error is None, "error": error}
+        return _render(request, "_settings_form.html", context, fragment="_settings_form.html")
+    if error:
+        return RedirectResponse(f"/settings?error={quote(error)}", 303)
+    return RedirectResponse("/settings", 303)
 
 
 async def _loop_context(dbdir: Path) -> dict[str, Any]:
