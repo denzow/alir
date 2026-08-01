@@ -252,3 +252,72 @@ def test_run_loop_stores_threshold_for_mcp(tmp_path: Path) -> None:
     )
     conn = db.connect(dbdir)
     assert control.get_value(conn, control.KEY_USAGE_THRESHOLD) == "0.7"
+
+
+def test_stop_instruction_is_recorded(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import control, mcp_server
+
+    conn = db.connect(tmp_path / "data")
+    monkeypatch.setattr(mcp_server, "_usage_cache", None)
+    monkeypatch.setattr(
+        mcp_server,
+        "usage_probe",
+        lambda: usage.UsageStatus(windows=(usage.UsageWindow("session", 95.0),)),
+    )
+    mcp_server.report_progress_tool(conn, issue="denzow/alir#12", message="実装中")
+    assert control.stop_instructed_at(conn, "denzow/alir#12") is not None
+
+
+def test_stop_without_report_requeues(tmp_path: Path) -> None:
+    """stop 指示に従わず報告なしで終わったセッションは queued に戻す。"""
+    from alir import control
+
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        # セッション中に stop 指示が出たが、報告せずに終了した状況
+        conn2 = db.connect(dbdir)
+        control.mark_stop_instructed(conn2, "denzow/alir#12")
+        return RunResult(exit_code=0, session_id=None, output="quit silently")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_QUEUED
+
+
+def test_stop_with_implemented_report_is_done(tmp_path: Path) -> None:
+    """stop 指示後でも implemented の報告があれば完了として扱う。"""
+    from alir import control, reports
+
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        conn2 = db.connect(dbdir)
+        control.mark_stop_instructed(conn2, "denzow/alir#12")
+        reports.add(conn2, issue="denzow/alir#12", summary="完了直前だったので仕上げた")
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_DONE
+
+
+def test_stale_stop_instruction_is_ignored(tmp_path: Path) -> None:
+    """前回の実行で出た stop 指示は今回の判定に影響しない。"""
+    import time as time_mod
+
+    from alir import control
+
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    control.mark_stop_instructed(conn, "denzow/alir#12")
+    time_mod.sleep(1.1)  # 記録が秒精度のため
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_DONE

@@ -62,6 +62,23 @@ def is_paused(conn: iceql.Connection) -> bool:
     return get_value(conn, KEY_PAUSED) == "1"
 
 
+def mark_stop_instructed(conn: iceql.Connection, issue_ref: str) -> None:
+    """使用率超過でセッションに停止を指示したことを記録する。
+
+    指示に従わず報告なしで終了した場合に、ドライバが requeue するための保険。
+    """
+    set_value(
+        conn,
+        f"stop_instructed:{issue_ref}",
+        _now().isoformat(timespec="seconds"),
+    )
+
+
+def stop_instructed_at(conn: iceql.Connection, issue_ref: str) -> str | None:
+    """停止指示を出した時刻(ISO 文字列)。出していなければ None。"""
+    return get_value(conn, f"stop_instructed:{issue_ref}")
+
+
 def heartbeat(conn: iceql.Connection) -> None:
     """ドライバの生存時刻を記録する。各サイクルの先頭で呼ぶ。"""
     set_value(conn, KEY_HEARTBEAT, _now().isoformat(timespec="seconds"))

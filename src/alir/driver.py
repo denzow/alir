@@ -334,16 +334,21 @@ def process_issue(
     has_open_question = any(
         q.issue == issue.ref for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
     )
+    run_reports = [
+        r for r in reports.list_reports(conn, issue=issue.ref) if r.created_at >= started_at
+    ]
     requeue_reported = any(
-        r.outcome in (reports.OUTCOME_REFINED, reports.OUTCOME_ABORTED)
-        for r in reports.list_reports(conn, issue=issue.ref)
-        if r.created_at >= started_at
+        r.outcome in (reports.OUTCOME_REFINED, reports.OUTCOME_ABORTED) for r in run_reports
     )
+    # stop 指示を受けたのに報告なしで終わった場合は中断とみなして queued に戻す
+    # (報告があるならその outcome を信頼する)
+    stop_at = control.stop_instructed_at(conn, issue.ref)
+    stopped_without_report = stop_at is not None and stop_at >= started_at and not run_reports
     if has_open_question:
         status = registry.STATUS_PARKED
     elif result.exit_code != 0:
         status = registry.STATUS_FAILED
-    elif requeue_reported:
+    elif requeue_reported or stopped_without_report:
         status = registry.STATUS_QUEUED
     else:
         status = registry.STATUS_DONE

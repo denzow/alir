@@ -95,6 +95,7 @@ def report_progress_tool(
     with contextlib.suppress(Exception):  # 使用率が取れなくても進捗記録は成功させる
         reason = _check_usage_stop(conn)
     if reason:
+        control.mark_stop_instructed(conn, issue)
         result["stop"] = True
         result["message"] = (
             f"Recorded. USAGE LIMIT REACHED ({reason}). Stop working now: "
