@@ -118,3 +118,19 @@ def test_run_loop_cycles_while_session_running(dbdir: Path) -> None:
         "denzow/alir#12": registry.STATUS_DONE,
         "denzow/alir#13": registry.STATUS_DONE,
     }
+
+
+def test_run_loop_recovers_orphaned_running_issues(dbdir: Path) -> None:
+    """起動時に running のまま残った Issue を queued に戻して処理する。"""
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    registry.set_status(conn, issue.id, registry.STATUS_RUNNING)
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    logs: list[str] = []
+    driver.run_loop(dbdir, once=True, runner=runner, worktree=_fake_worktree, log=logs.append)
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_DONE
+    assert any("recover #1" in line for line in logs)

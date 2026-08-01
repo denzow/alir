@@ -253,6 +253,14 @@ def run_loop(
         with contextlib.suppress(Exception):
             control.log_event(db.connect(dbdir), message)
 
+    # 前回のクラッシュや強制終了で running のまま残った Issue を回収する。
+    # このドライバはまだ何も実行していないので、起動時点の running は遺骸とみなせる
+    # (ドライバの多重起動は想定しない)。
+    conn = db.connect(dbdir)
+    for orphan in registry.list_issues(conn, status=registry.STATUS_RUNNING):
+        registry.set_status(conn, orphan.id, registry.STATUS_QUEUED)
+        emit(f"recover #{orphan.id} {orphan.ref}: running -> queued")
+
     backoff = BACKOFF_INITIAL
     backoff_until = 0.0
     last_pause_reason: str | None = None
