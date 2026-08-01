@@ -11,6 +11,10 @@
     {% if heartbeat %}
     <span>heartbeat {{ heartbeat | localtime }}</span>
     {% endif %}
+    {% if rate_limits %}
+    {% if rate_limits.five_hour %}<span>5h {{ rate_limits.five_hour.used_percentage | round | int }}%</span>{% endif %}
+    {% if rate_limits.seven_day %}<span>wk {{ rate_limits.seven_day.used_percentage | round | int }}%</span>{% endif %}
+    {% endif %}
   </div>
   {% if paused %}
   <p class="loop-note">新規 Issue の実行を止めています。実行中のセッションは完了まで走ります。</p>

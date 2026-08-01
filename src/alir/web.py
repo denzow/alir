@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, progress, questions, registry, reports, settings
+from alir import control, db, progress, questions, registry, reports, settings, usage
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
 from alir.settings import SettingsError
@@ -275,6 +275,7 @@ async def _loop_context(dbdir: Path) -> dict[str, Any]:
             "alive": control.driver_alive(conn),
             "heartbeat": control.heartbeat_at(conn),
             "events": control.recent_events(conn),
+            "rate_limits": usage.read_rate_limits(usage.DEFAULT_RATE_LIMITS_PATH),
         }
 
     return await db.run_in_thread(work)
