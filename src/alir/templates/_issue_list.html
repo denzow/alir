@@ -11,7 +11,7 @@
   {% set report = reports.get(issue.ref) if reports else none %}
   {% if report %}
   <div class="report">
-    <span class="label">last run {{ report.created_at | localtime }}</span>
+    <span class="label">last run {{ report.created_at | localtime }}{% if report.outcome == "refined" %} · refined{% endif %}</span>
     <div>{{ report.summary }}</div>
     {% if report.pr_url %}
     <a href="{{ report.pr_url }}">{{ report.pr_url | replace("https://github.com/", "") }}</a>

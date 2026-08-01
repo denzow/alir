@@ -16,11 +16,11 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from alir import control, db, questions, registry, resume, settings, usage
+from alir import control, db, questions, registry, reports, resume, settings, usage
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -114,7 +114,13 @@ def setup_worktree(issue: Issue, branch: str) -> Path:
     return path
 
 
-def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]) -> str:
+def build_prompt(
+    issue: Issue,
+    branch: str,
+    *,
+    answers: list[questions.Question],
+    past_reports: list[reports.Report] | None = None,
+) -> str:
     """1 Issue を処理するセッションのプロンプトを組み立てる。"""
     lines = [
         "あなたは GitHub Issue を自律的に処理するエージェントである。",
@@ -123,13 +129,27 @@ def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]
         f"作業ブランチ: {branch}(すでにチェックアウト済み)",
         "",
         "手順:",
-        f"1. `gh issue view {issue.url}` で Issue を読み、要件を把握する。",
-        "2. このリポジトリで実装し、作業ブランチにコミットする。",
-        "3. テストとリンタが通ることを確認する。",
-        f"4. `git push -u origin {branch}` のうえ `gh pr create` で PR を作る。",
+        f"1. `gh issue view {issue.url} --comments` で Issue とコメントを読み、要件を把握する。",
+        "2. Issue が実装に着手できる程度に具体化されているか判断する。",
+        "   受け入れ条件と対象範囲が読み取れ、コード調査で埋められない不明点がなければ"
+        "十分とみなす。",
+        "   過去にリファインメント済み(下記の実施記録や Issue コメントがある)なら、"
+        "原則実装に進む。",
+        "",
+        "十分な場合(実装):",
+        "3. このリポジトリで実装し、作業ブランチにコミットする。",
+        "4. テストとリンタが通ることを確認する。",
+        f"5. `git push -u origin {branch}` のうえ `gh pr create` で PR を作る。",
         "   PR 本文には「判断ポイント」節を設け、低影響の判断とその理由を記載する。",
-        "5. 終了する前に report_result MCP ツールで実施内容を 1 行で報告する。",
+        '6. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
         f'   issue パラメータには "{issue.ref}"、PR を作成した場合は pr_url も渡す。',
+        "",
+        "不十分な場合(リファインメント):",
+        "3. コードベースを調査し、仕様案・実装方針・判断ポイントを整理する。",
+        f"4. 整理した内容を `gh issue comment {issue.url}` で Issue に投稿する。",
+        "5. 人間の判断が必要な点は ask_human MCP ツールで質問する。",
+        '6. 実装は行わず、report_result MCP ツール(outcome="refined")で報告して終了する。',
+        "   次のセッションがリファインメント結果を前提に実装する。",
         "",
         "作業の節目(調査を終えた、実装に入った、テストを回した、PR を作った、など)ごとに、",
         "report_progress MCP ツールで進捗を 1 行報告する。"
@@ -141,6 +161,10 @@ def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]
         "質問を登録したら回答を待たず、そこまでの実施内容を report_result で報告して"
         "即座に終了する。",
     ]
+    if past_reports:
+        lines += ["", "これまでの実施記録(新しい順):"]
+        for report in past_reports:
+            lines.append(f"- [{report.outcome}] {report.summary}")
     if answers:
         lines += ["", "過去の質問への回答(これを前提に続行する):"]
         for q in answers:
@@ -228,7 +252,10 @@ def process_issue(
 
     ブランチ名は初回はテンプレート(settings)から作り、
     再開時は前回のブランチをそのまま使う。
+    セッションがリファインメントだけで終えた(outcome="refined"の報告)場合は
+    queued に戻し、次のセッションが実装する。
     """
+    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn = db.connect(dbdir)
     issue = registry.get(conn, iid)
     registry.set_status(conn, iid, registry.STATUS_RUNNING)
@@ -237,10 +264,11 @@ def process_issue(
         for q in questions.list_questions(conn, status=None)
         if q.issue == issue.ref and q.answer is not None
     ]
+    past_reports = reports.list_reports(conn, issue=issue.ref, limit=3)
     branch = issue.branch or settings.render_branch(settings.branch_template(conn), issue)
     try:
         path = worktree(issue, branch)
-        prompt = build_prompt(issue, branch, answers=answered)
+        prompt = build_prompt(issue, branch, answers=answered, past_reports=past_reports)
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
         registry.set_status(db.connect(dbdir), iid, registry.STATUS_FAILED)
@@ -260,10 +288,17 @@ def process_issue(
     has_open_question = any(
         q.issue == issue.ref for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
     )
+    refined = any(
+        r.outcome == reports.OUTCOME_REFINED
+        for r in reports.list_reports(conn, issue=issue.ref)
+        if r.created_at >= started_at
+    )
     if has_open_question:
         status = registry.STATUS_PARKED
     elif result.exit_code != 0:
         status = registry.STATUS_FAILED
+    elif refined:
+        status = registry.STATUS_QUEUED
     else:
         status = registry.STATUS_DONE
     return registry.set_status(conn, iid, status, session_id=result.session_id, branch=branch)

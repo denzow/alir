@@ -59,3 +59,19 @@ def test_report_result_tool(conn) -> None:  # type: ignore[no-untyped-def]
     )
     assert result["report_id"] == 1
     assert reports.list_reports(conn)[0].pr_url == "https://github.com/denzow/alir/pull/5"
+
+
+def test_add_with_refined_outcome(conn) -> None:  # type: ignore[no-untyped-def]
+    r = reports.add(conn, issue="denzow/alir#1", summary="仕様を整理", outcome="refined")
+    assert r.outcome == "refined"
+    assert reports.list_reports(conn)[0].outcome == "refined"
+
+
+def test_default_outcome_is_implemented(conn) -> None:  # type: ignore[no-untyped-def]
+    reports.add(conn, issue="denzow/alir#1", summary="実装した")
+    assert reports.list_reports(conn)[0].outcome == "implemented"
+
+
+def test_add_rejects_unknown_outcome(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ReportError):
+        reports.add(conn, issue="denzow/alir#1", summary="x", outcome="paused")

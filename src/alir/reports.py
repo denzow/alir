@@ -18,6 +18,11 @@ class ReportError(Exception):
     """報告の登録に関する利用側の誤り。"""
 
 
+OUTCOME_IMPLEMENTED = "implemented"
+OUTCOME_REFINED = "refined"
+OUTCOMES = (OUTCOME_IMPLEMENTED, OUTCOME_REFINED)
+
+
 @dataclass(frozen=True)
 class Report:
     id: int
@@ -26,6 +31,7 @@ class Report:
     pr_url: str | None
     session_id: str | None
     created_at: str
+    outcome: str = OUTCOME_IMPLEMENTED
 
 
 def _now() -> str:
@@ -39,10 +45,13 @@ def add(
     summary: str,
     pr_url: str | None = None,
     session_id: str | None = None,
+    outcome: str = OUTCOME_IMPLEMENTED,
 ) -> Report:
     """実施内容を 1 件記録する。"""
     if not summary.strip():
         raise ReportError("summary must not be empty")
+    if outcome not in OUTCOMES:
+        raise ReportError(f"outcome must be one of {OUTCOMES}")
     now = _now()
     with db.transaction(conn):
         cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM reports")
@@ -50,9 +59,9 @@ def add(
         assert row is not None
         rid = int(str(row[0])) + 1
         conn.execute(
-            "INSERT INTO reports (id, issue, summary, pr_url, session_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (rid, issue, summary.strip(), pr_url, session_id, now),
+            "INSERT INTO reports (id, issue, summary, pr_url, session_id, created_at, outcome) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (rid, issue, summary.strip(), pr_url, session_id, now, outcome),
         )
     return Report(
         id=rid,
@@ -61,6 +70,7 @@ def add(
         pr_url=pr_url,
         session_id=session_id,
         created_at=now,
+        outcome=outcome,
     )
 
 
@@ -72,12 +82,12 @@ def list_reports(
     limit_sql = int(limit)
     if issue is None:
         cur = conn.execute(
-            "SELECT id, issue, summary, pr_url, session_id, created_at FROM reports "
+            "SELECT id, issue, summary, pr_url, session_id, created_at, outcome FROM reports "
             f"ORDER BY id DESC LIMIT {limit_sql}"
         )
     else:
         cur = conn.execute(
-            "SELECT id, issue, summary, pr_url, session_id, created_at FROM reports "
+            "SELECT id, issue, summary, pr_url, session_id, created_at, outcome FROM reports "
             f"WHERE issue = ? ORDER BY id DESC LIMIT {limit_sql}",
             (issue,),
         )
@@ -89,8 +99,9 @@ def list_reports(
             pr_url=None if pr_url is None else str(pr_url),
             session_id=None if session_id is None else str(session_id),
             created_at=str(created_at),
+            outcome=OUTCOME_IMPLEMENTED if outcome is None else str(outcome),
         )
-        for rid, ref, summary, pr_url, session_id, created_at in cur.fetchall()
+        for rid, ref, summary, pr_url, session_id, created_at, outcome in cur.fetchall()
     ]
 
 

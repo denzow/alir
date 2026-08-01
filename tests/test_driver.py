@@ -242,3 +242,50 @@ def test_process_issue_reuses_stored_branch(dbdir: Path) -> None:
     runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
     driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
     assert captured["branch"] == "old-branch"
+
+
+def test_process_issue_requeues_when_refined(dbdir: Path) -> None:
+    from alir import reports
+
+    issue = _add_issue(dbdir)
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        conn = db.connect(dbdir)
+        reports.add(
+            conn, issue="denzow/alir#12", summary="仕様を整理して Issue に投稿", outcome="refined"
+        )
+        return RunResult(exit_code=0, session_id="sess-1", output="refined")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_QUEUED
+
+
+def test_process_issue_ignores_stale_refined_report(dbdir: Path) -> None:
+    """今回の実行より前の refined 報告では requeue しない。"""
+    from alir import reports
+
+    issue = _add_issue(dbdir)
+    conn = db.connect(dbdir)
+    reports.add(conn, issue="denzow/alir#12", summary="前回のリファインメント", outcome="refined")
+
+    import time
+
+    time.sleep(1.1)  # created_at が秒精度のため、開始時刻を確実に後にする
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_DONE
+
+
+def test_prompt_includes_refinement_cycle(dbdir: Path) -> None:
+    from alir import reports
+
+    issue = _add_issue(dbdir)
+    conn = db.connect(dbdir)
+    reports.add(conn, issue="denzow/alir#12", summary="仕様を整理", outcome="refined")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "リファインメント" in prompt
+    assert 'outcome="refined"' in prompt
+    assert "[refined] 仕様を整理" in prompt

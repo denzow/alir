@@ -109,3 +109,26 @@ def test_migrate_adds_title_column(tmp_path: Path) -> None:
     conn = db.connect(dbdir)
     issue = registry.get(conn, 1)
     assert issue.title is None
+
+
+def test_migrate_adds_outcome_column(tmp_path: Path) -> None:
+    """outcome 列のない既存 reports テーブルに接続すると列が追加される。"""
+    import iceql
+
+    dbdir = tmp_path / "data"
+    dbdir.mkdir(parents=True)
+    old = iceql.connect(dbdir)
+    old.execute(
+        "CREATE TABLE reports (id INTEGER PRIMARY KEY, issue TEXT NOT NULL, "
+        "summary TEXT NOT NULL, pr_url TEXT, session_id TEXT, created_at TEXT NOT NULL)"
+    )
+    old.execute(
+        "INSERT INTO reports (id, issue, summary, pr_url, session_id, created_at) "
+        "VALUES (1, 'a#1', 'done', NULL, NULL, 't')"
+    )
+    old.close()
+
+    from alir import reports
+
+    conn = db.connect(dbdir)
+    assert reports.list_reports(conn)[0].outcome == "implemented"

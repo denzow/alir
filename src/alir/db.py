@@ -76,7 +76,8 @@ CREATE TABLE reports (
     summary TEXT NOT NULL,
     pr_url TEXT,
     session_id TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    outcome TEXT
 )
 """,
     "issues": """
@@ -100,10 +101,15 @@ CREATE TABLE issues (
 
 def _migrate(conn: iceql.Connection) -> None:
     """既存 DB への後方互換の列追加。"""
-    try:
-        conn.execute("SELECT title FROM issues LIMIT 1")
-    except iceql.Error:
-        conn.execute("ALTER TABLE issues ADD COLUMN title TEXT")
+    additions = (
+        ("issues", "title", "ALTER TABLE issues ADD COLUMN title TEXT"),
+        ("reports", "outcome", "ALTER TABLE reports ADD COLUMN outcome TEXT"),
+    )
+    for table, column, ddl in additions:
+        try:
+            conn.execute(f"SELECT {column} FROM {table} LIMIT 1")
+        except iceql.Error:
+            conn.execute(ddl)
 
 
 def connect(dbdir: Path) -> iceql.Connection:

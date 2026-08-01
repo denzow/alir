@@ -65,9 +65,17 @@ def report_result_tool(
     summary: str,
     pr_url: str | None = None,
     session_id: str | None = None,
+    outcome: str = reports.OUTCOME_IMPLEMENTED,
 ) -> dict[str, Any]:
     """実施内容を記録し、登録結果を返す。"""
-    report = reports.add(conn, issue=issue, summary=summary, pr_url=pr_url, session_id=session_id)
+    report = reports.add(
+        conn,
+        issue=issue,
+        summary=summary,
+        pr_url=pr_url,
+        session_id=session_id,
+        outcome=outcome,
+    )
     return {"report_id": report.id, "message": "Recorded."}
 
 
@@ -144,6 +152,7 @@ def create_server(dbdir: str | Path) -> Any:
         summary: str,
         pr_url: str | None = None,
         session_id: str | None = None,
+        outcome: str = "implemented",
     ) -> dict[str, Any]:
         """Record what you did for an issue. Call this once before finishing a session.
 
@@ -153,9 +162,18 @@ def create_server(dbdir: str | Path) -> Any:
                 you got before parking). Write it for a human scanning a list.
             pr_url: URL of the pull request, if you opened one.
             session_id: Claude Code session id, if known.
+            outcome: "implemented" if you worked on the implementation, or
+                "refined" if you only refined the issue (spec, plan, decision
+                points) without implementing. "refined" requeues the issue so
+                the next session implements it.
         """
         return report_result_tool(
-            conn, issue=issue, summary=summary, pr_url=pr_url, session_id=session_id
+            conn,
+            issue=issue,
+            summary=summary,
+            pr_url=pr_url,
+            session_id=session_id,
+            outcome=outcome,
         )
 
     return server
