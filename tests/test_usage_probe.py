@@ -112,3 +112,28 @@ def test_run_loop_skips_probe_when_disabled(tmp_path: Path) -> None:
     conn = db.connect(dbdir)
     assert registry.list_issues(conn)[0].status == registry.STATUS_DONE
     assert control.get_value(conn, control.KEY_USAGE_STATUS) is None
+
+
+def test_run_loop_honors_usage_threshold_without_budget(tmp_path: Path) -> None:
+    """トークン予算なしでも --budget-threshold 相当の閾値が使用率判定に効く。"""
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir="/tmp")
+
+    def probe() -> usage.UsageStatus:
+        return usage.UsageStatus(windows=(usage.UsageWindow("week (Fable)", 55.0),))
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        usage_probe=probe,
+        usage_threshold=0.7,
+        log=lambda _: None,
+    )
+    conn = db.connect(dbdir)
+    assert registry.list_issues(conn)[0].status == registry.STATUS_DONE

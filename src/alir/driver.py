@@ -317,6 +317,7 @@ def run_loop(
     budget: usage.Budget | None = None,
     usage_probe: Callable[[], usage.UsageStatus | None] | None = None,
     usage_check_ttl: float = 300.0,
+    usage_threshold: float | None = None,
     log: Callable[[str], None] = print,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
@@ -351,7 +352,12 @@ def run_loop(
     last_pause_reason: str | None = None
     probe_status: usage.UsageStatus | None = None
     next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
-    threshold = budget.threshold if budget is not None else usage.DEFAULT_THRESHOLD
+    if usage_threshold is not None:
+        threshold = usage_threshold
+    elif budget is not None:
+        threshold = budget.threshold
+    else:
+        threshold = usage.DEFAULT_THRESHOLD
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:

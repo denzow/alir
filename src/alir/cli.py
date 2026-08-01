@@ -231,6 +231,7 @@ def run_cmd(
         question_timeout=timedelta(hours=question_timeout_hours),
         budget=_build_budget(session_budget, weekly_budget, budget_threshold),
         usage_probe=None if no_usage_check else usage.fetch_usage_status,
+        usage_threshold=budget_threshold,
     )
 
 
@@ -277,6 +278,7 @@ def serve_cmd(
             "question_timeout": timedelta(hours=question_timeout_hours),
             "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
             "usage_probe": None if no_usage_check else usage.fetch_usage_status,
+            "usage_threshold": budget_threshold,
             "runner": runner,
         },
         daemon=True,
