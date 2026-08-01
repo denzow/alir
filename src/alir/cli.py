@@ -177,7 +177,7 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
         ),
         click.option(
             "--budget-threshold",
-            default=0.8,
+            default=usage.DEFAULT_THRESHOLD,
             show_default=True,
             type=float,
             help="使用率や予算がこの割合を超えたら新規実行を止める",

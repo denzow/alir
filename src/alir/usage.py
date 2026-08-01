@@ -23,7 +23,7 @@ from alir import db
 WINDOW_SESSION = timedelta(hours=5)
 WINDOW_WEEKLY = timedelta(days=7)
 
-DEFAULT_THRESHOLD = 0.8
+DEFAULT_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
