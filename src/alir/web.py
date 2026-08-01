@@ -7,6 +7,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -270,11 +271,14 @@ async def settings_save(request: Request) -> Response:
 async def _loop_context(dbdir: Path) -> dict[str, Any]:
     def work() -> dict[str, Any]:
         conn = db.connect(dbdir)
+        raw = control.get_value(conn, control.KEY_USAGE_STATUS)
+        usage_windows = json.loads(raw) if raw else None
         return {
             "paused": control.is_paused(conn),
             "alive": control.driver_alive(conn),
             "heartbeat": control.heartbeat_at(conn),
             "events": control.recent_events(conn),
+            "usage_windows": usage_windows,
         }
 
     return await db.run_in_thread(work)

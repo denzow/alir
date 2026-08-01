@@ -180,7 +180,12 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
             default=0.8,
             show_default=True,
             type=float,
-            help="予算のこの割合を超えたら新規実行を止める",
+            help="使用率や予算がこの割合を超えたら新規実行を止める",
+        ),
+        click.option(
+            "--no-usage-check",
+            is_flag=True,
+            help="claude -p /usage による公式使用率の確認を無効にする",
         ),
     ]
     for option in reversed(options):
@@ -210,6 +215,7 @@ def run_cmd(
     session_budget: int | None,
     weekly_budget: int | None,
     budget_threshold: float,
+    no_usage_check: bool,
 ) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
     from datetime import timedelta
@@ -224,6 +230,7 @@ def run_cmd(
         skip_permissions=skip_permissions,
         question_timeout=timedelta(hours=question_timeout_hours),
         budget=_build_budget(session_budget, weekly_budget, budget_threshold),
+        usage_probe=None if no_usage_check else usage.fetch_usage_status,
     )
 
 
@@ -241,6 +248,7 @@ def serve_cmd(
     session_budget: int | None,
     weekly_budget: int | None,
     budget_threshold: float,
+    no_usage_check: bool,
 ) -> None:
     """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
 
@@ -268,6 +276,7 @@ def serve_cmd(
             "skip_permissions": skip_permissions,
             "question_timeout": timedelta(hours=question_timeout_hours),
             "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
+            "usage_probe": None if no_usage_check else usage.fetch_usage_status,
             "runner": runner,
         },
         daemon=True,

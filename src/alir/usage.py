@@ -1,12 +1,17 @@
-"""稼働管理: トークン消費の記録とウィンドウ予算の判定。
+"""稼働管理: 公式レート制限使用率の取得とトークン予算の判定。
 
-セッションごとの消費を runs テーブルに記録し、
-5 時間ウィンドウと週次ウィンドウの消費が予算の閾値を超えたら新規実行を止める。
-予算はサーバー側の残枠を取れないため設定値であり、limit 到達時の実測で見直す。
+判定の主軸は `claude -p /usage` で取得する公式の使用率
+(5 時間セッション、週次、モデル別週次)。ドライバが自分のタイミングで
+取得するため鮮度の問題がない。
+補助として、セッションごとの消費を runs テーブルに記録し、
+設定したトークン予算の閾値超過でも新規実行を止められる。
 """
 
 from __future__ import annotations
 
+import json
+import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -18,6 +23,8 @@ from alir import db
 WINDOW_SESSION = timedelta(hours=5)
 WINDOW_WEEKLY = timedelta(days=7)
 
+DEFAULT_THRESHOLD = 0.8
+
 
 @dataclass(frozen=True)
 class Budget:
@@ -25,7 +32,62 @@ class Budget:
 
     session_tokens: int | None = None
     weekly_tokens: int | None = None
-    threshold: float = 0.8
+    threshold: float = DEFAULT_THRESHOLD
+
+
+@dataclass(frozen=True)
+class UsageWindow:
+    label: str
+    used_percentage: float
+
+
+@dataclass(frozen=True)
+class UsageStatus:
+    windows: tuple[UsageWindow, ...]
+
+
+_USAGE_LINE = re.compile(
+    r"^Current (?P<label>session|week \([^)]+\)): (?P<pct>\d+(?:\.\d+)?)% used",
+    re.MULTILINE,
+)
+
+
+def parse_usage_text(text: str) -> UsageStatus | None:
+    """/usage の出力テキストからウィンドウごとの使用率を取り出す。"""
+    windows = tuple(
+        UsageWindow(label=m["label"], used_percentage=float(m["pct"]))
+        for m in _USAGE_LINE.finditer(text)
+    )
+    return UsageStatus(windows=windows) if windows else None
+
+
+def fetch_usage_status(*, timeout: float = 120.0) -> UsageStatus | None:
+    """`claude -p /usage` で公式のレート制限使用率を取得する。失敗したら None。"""
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", "/usage", "--output-format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    return parse_usage_text(str(data.get("result") or ""))
+
+
+def status_pause_reason(status: UsageStatus, *, threshold: float) -> str | None:
+    """公式の使用率が閾値を超えているウィンドウがあれば理由を返す。"""
+    for window in status.windows:
+        if window.used_percentage >= threshold * 100:
+            return f"{window.label}: {window.used_percentage:.0f}% used (official)"
+    return None
 
 
 def _now() -> datetime:

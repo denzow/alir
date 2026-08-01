@@ -11,6 +11,11 @@
     {% if heartbeat %}
     <span>heartbeat {{ heartbeat | localtime }}</span>
     {% endif %}
+    {% if usage_windows %}
+    {% for window in usage_windows %}
+    <span>{{ window[0] | replace("week (all models)", "week") }} {{ window[1] | round | int }}%</span>
+    {% endfor %}
+    {% endif %}
   </div>
   {% if paused %}
   <p class="loop-note">新規 Issue の実行を止めています。実行中のセッションは完了まで走ります。</p>

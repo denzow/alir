@@ -315,14 +315,20 @@ def run_loop(
     skip_permissions: bool = False,
     question_timeout: timedelta = timedelta(hours=12),
     budget: usage.Budget | None = None,
+    usage_probe: Callable[[], usage.UsageStatus | None] | None = None,
+    usage_check_ttl: float = 300.0,
     log: Callable[[str], None] = print,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
     各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
-    Issue を queued に戻す。手動の一時停止フラグ、予算の閾値超過、
-    レート制限時のバックオフ中は新規 Issue を開始しない
-    (実行中のものは完了まで走らせる)。
+    Issue を queued に戻す。手動の一時停止フラグ、公式レート制限使用率の
+    閾値超過、トークン予算の閾値超過、レート制限時のバックオフ中は
+    新規 Issue を開始しない(実行中のものは完了まで走らせる)。
+
+    usage_probe(通常は usage.fetch_usage_status)は初回サイクルで呼ばれ、
+    以後 usage_check_ttl 秒キャッシュされる。セッションが完了するたびに
+    キャッシュを破棄し、次の開始前に必ず新しい使用率で判定する。
     イベントは events テーブルにも記録し、Web UI から参照できるようにする。
     """
 
@@ -343,6 +349,9 @@ def run_loop(
     backoff = BACKOFF_INITIAL
     backoff_until = 0.0
     last_pause_reason: str | None = None
+    probe_status: usage.UsageStatus | None = None
+    next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
+    threshold = budget.threshold if budget is not None else usage.DEFAULT_THRESHOLD
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:
@@ -353,13 +362,26 @@ def run_loop(
             for requeued in resume.requeue_answered(conn):
                 emit(f"requeue #{requeued.id} {requeued.ref}")
 
-            paused: str | None
+            if usage_probe is not None and time.monotonic() >= next_probe:
+                probe_status = usage_probe()
+                next_probe = time.monotonic() + usage_check_ttl
+                if probe_status is not None:
+                    control.set_value(
+                        conn,
+                        control.KEY_USAGE_STATUS,
+                        json.dumps(
+                            [[w.label, w.used_percentage] for w in probe_status.windows],
+                            ensure_ascii=False,
+                        ),
+                    )
+
+            paused: str | None = None
             if control.is_paused(conn):
                 paused = "paused manually"
-            elif budget is not None:
+            if paused is None and probe_status is not None:
+                paused = usage.status_pause_reason(probe_status, threshold=threshold)
+            if paused is None and budget is not None:
                 paused = usage.pause_reason(conn, budget)
-            else:
-                paused = None
             if paused != last_pause_reason:
                 emit(f"pause: {paused}" if paused else "resume")
                 last_pause_reason = paused
@@ -410,3 +432,5 @@ def run_loop(
                     backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
                 except Exception as exc:  # noqa: BLE001
                     emit(f"error #{iid}: {exc}")
+                # セッションが終わるたびに使用率を取り直す(次の開始前の確認)
+                next_probe = 0.0

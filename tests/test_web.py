@@ -394,3 +394,15 @@ def test_settings_save_invalid_template_keeps_current(client: TestClient, dbdir:
     assert "must contain" in res.text
     conn = db.connect(dbdir)
     assert settings.branch_template(conn) == "alir/issue-{number}"
+
+
+def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
+    from alir import control
+
+    conn = db.connect(dbdir)
+    control.set_value(
+        conn, control.KEY_USAGE_STATUS, '[["session", 19.0], ["week (Fable)", 54.0]]'
+    )
+    res = client.get("/loop")
+    assert "week (Fable)" in res.text
+    assert "54%" in res.text
