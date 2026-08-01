@@ -6,8 +6,16 @@
 <div class="card add-form">
   <form method="post" action="/issues/add"
         hx-post="/issues/add" hx-target="#issues" hx-swap="innerHTML">
-    <input type="text" name="url" placeholder="https://github.com/owner/repo/issues/123">
-    <input type="text" name="workdir" list="workdirs" placeholder="対象リポジトリのローカルパス">
+    <div class="field">
+      <label for="issue-url">Issue URL</label>
+      <input id="issue-url" type="text" name="url"
+             placeholder="https://github.com/owner/repo/issues/123">
+    </div>
+    <div class="field">
+      <label for="issue-workdir">ローカルパス</label>
+      <input id="issue-workdir" type="text" name="workdir" list="workdirs"
+             placeholder="対象リポジトリのローカルパス">
+    </div>
     <datalist id="workdirs">
       {% for workdir in workdirs %}<option value="{{ workdir }}">{% endfor %}
     </datalist>
