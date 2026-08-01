@@ -82,3 +82,75 @@ def test_answered_question_visible_with_all(client: TestClient, dbdir: Path) -> 
     res = client.get("/?all=1")
     assert "[answered]" in res.text
     assert "A: 変更する" in res.text
+
+
+URL = "https://github.com/denzow/alir/issues/12"
+
+
+def test_issues_page_empty(client: TestClient) -> None:
+    res = client.get("/issues")
+    assert res.status_code == 200
+    assert "no issues" in res.text
+
+
+def test_issues_add_and_list(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/issues/add",
+        data={"url": URL, "workdir": str(workdir), "priority": "5"},
+        follow_redirects=True,
+    )
+    assert res.status_code == 200
+    assert "denzow/alir#12" in res.text
+    assert "[queued]" in res.text
+
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.get(conn, 1)
+    assert issue.priority == 5
+
+
+def test_issues_add_rejects_bad_workdir(client: TestClient) -> None:
+    res = client.post(
+        "/issues/add",
+        data={"url": URL, "workdir": "/no/such/dir"},
+        follow_redirects=True,
+    )
+    assert "workdir not found" in res.text
+
+
+def test_issues_add_rejects_bad_url(client: TestClient, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/issues/add",
+        data={"url": "https://example.com/x", "workdir": str(workdir)},
+        follow_redirects=True,
+    )
+    assert "not a GitHub issue URL" in res.text
+
+
+def test_issues_requeue_failed(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path))
+    registry.set_status(conn, issue.id, registry.STATUS_FAILED)
+
+    res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
+    assert "[queued]" in res.text
+
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_QUEUED
+
+
+def test_issues_requeue_rejects_non_failed(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path))
+
+    res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
+    assert "not failed" in res.text

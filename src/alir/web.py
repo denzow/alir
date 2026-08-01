@@ -14,8 +14,9 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.routing import Route
 
-from alir import db, questions
+from alir import db, questions, registry
 from alir.questions import Question, QuestionError
+from alir.registry import Issue, RegistryError
 
 _STYLE = """
 :root { color-scheme: light dark; }
@@ -36,7 +37,19 @@ input[type=text] { width: 100%; box-sizing: border-box; padding: 0.6rem; margin:
                background: none; color: inherit; font-size: 1rem; }
 .answered { opacity: 0.6; }
 .error { color: #c00; }
+nav a { margin-right: 1rem; }
+.issue-form input[type=text] { margin: 0.2rem 0; }
+.issue-form button, .requeue button { padding: 0.5rem 1rem; border-radius: 6px;
+    border: 1px solid currentColor; background: none; color: inherit; font-size: 0.95rem; }
 """
+
+_HEAD = (
+    "<!doctype html>"
+    '<html lang="ja"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    f"<title>alir</title><style>{_STYLE}</style></head><body>"
+    '<nav><a href="/">questions</a><a href="/issues">issues</a></nav>'
+)
 
 
 def _render_question(q: Question) -> str:
@@ -72,19 +85,53 @@ def _render_question(q: Question) -> str:
 def _render_page(items: list[Question], *, show_all: bool, error: str | None) -> str:
     esc = html.escape
     toggle = '<a href="/">未回答のみ</a>' if show_all else '<a href="/?all=1">すべて表示</a>'
-    body = [
-        "<!doctype html>",
-        '<html lang="ja"><head><meta charset="utf-8">',
-        '<meta name="viewport" content="width=device-width, initial-scale=1">',
-        f"<title>alir</title><style>{_STYLE}</style></head><body>",
-        f"<h1>alir questions</h1><p>{toggle}</p>",
-    ]
+    body = [_HEAD, f"<h1>alir questions</h1><p>{toggle}</p>"]
     if error:
         body.append(f'<p class="error">{esc(error)}</p>')
     if items:
         body.extend(_render_question(q) for q in items)
     else:
         body.append("<p>no questions</p>")
+    body.append("</body></html>")
+    return "\n".join(body)
+
+
+def _render_issue(issue: Issue) -> str:
+    esc = html.escape
+    parts = [
+        '<div class="card">',
+        f'<div class="meta">#{issue.id} [{esc(issue.status)}] priority: {issue.priority}</div>',
+        f'<p><a href="{esc(issue.url)}">{esc(issue.ref)}</a></p>',
+        f'<p class="meta">{esc(issue.workdir)}</p>',
+    ]
+    if issue.status == registry.STATUS_FAILED:
+        parts.append(
+            f'<form class="requeue" method="post" action="/issues/{issue.id}/requeue">'
+            "<button>再実行 (queued に戻す)</button></form>"
+        )
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
+def _render_issues_page(items: list[Issue], *, error: str | None) -> str:
+    esc = html.escape
+    body = [
+        _HEAD,
+        "<h1>alir issues</h1>",
+    ]
+    if error:
+        body.append(f'<p class="error">{esc(error)}</p>')
+    body.append(
+        '<div class="card issue-form"><form method="post" action="/issues/add">'
+        '<input type="text" name="url" placeholder="https://github.com/owner/repo/issues/123">'
+        '<input type="text" name="workdir" placeholder="対象リポジトリのローカルパス">'
+        '<input type="text" name="priority" placeholder="優先度 (既定 0、大きいほど先)">'
+        "<button>登録</button></form></div>"
+    )
+    if items:
+        body.extend(_render_issue(i) for i in items)
+    else:
+        body.append("<p>no issues</p>")
     body.append("</body></html>")
     return "\n".join(body)
 
@@ -125,11 +172,75 @@ async def answer_question(request: Request) -> RedirectResponse:
     return RedirectResponse("/", status_code=303)
 
 
+async def issues_index(request: Request) -> HTMLResponse:
+    dbdir = request.app.state.dbdir
+
+    def work() -> list[Issue]:
+        return registry.list_issues(db.connect(dbdir))
+
+    items = await db.run_in_thread(work)
+    error = request.query_params.get("error")
+    return HTMLResponse(_render_issues_page(items, error=error))
+
+
+async def issues_add(request: Request) -> RedirectResponse:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    url = str(form.get("url") or "").strip()
+    workdir = str(form.get("workdir") or "").strip()
+    priority_raw = str(form.get("priority") or "").strip() or "0"
+
+    from urllib.parse import quote
+
+    try:
+        priority = int(priority_raw)
+    except ValueError:
+        return RedirectResponse(f"/issues?error={quote('priority must be an integer')}", 303)
+    workdir_path = Path(workdir).expanduser()
+    if not workdir_path.is_dir():
+        return RedirectResponse(f"/issues?error={quote(f'workdir not found: {workdir}')}", 303)
+
+    def work() -> None:
+        registry.add(
+            db.connect(dbdir), url=url, workdir=str(workdir_path.resolve()), priority=priority
+        )
+
+    try:
+        await db.run_in_thread(work)
+    except RegistryError as exc:
+        return RedirectResponse(f"/issues?error={quote(str(exc))}", 303)
+    return RedirectResponse("/issues", 303)
+
+
+async def issues_requeue(request: Request) -> RedirectResponse:
+    dbdir = request.app.state.dbdir
+    iid = int(request.path_params["iid"])
+
+    from urllib.parse import quote
+
+    def work() -> None:
+        conn = db.connect(dbdir)
+        with db.transaction(conn):
+            issue = registry.get(conn, iid)
+            if issue.status != registry.STATUS_FAILED:
+                raise RegistryError(f"issue {iid} is {issue.status}, not failed")
+            registry.set_status(conn, iid, registry.STATUS_QUEUED)
+
+    try:
+        await db.run_in_thread(work)
+    except RegistryError as exc:
+        return RedirectResponse(f"/issues?error={quote(str(exc))}", 303)
+    return RedirectResponse("/issues", 303)
+
+
 def app_routes() -> list[Route]:
     """Web UI のルート定義を返す。単体起動でも MCP との同居でも同じものを使う。"""
     return [
         Route("/", index, methods=["GET"]),
         Route("/questions/{qid:int}/answer", answer_question, methods=["POST"]),
+        Route("/issues", issues_index, methods=["GET"]),
+        Route("/issues/add", issues_add, methods=["POST"]),
+        Route("/issues/{iid:int}/requeue", issues_requeue, methods=["POST"]),
     ]
 
 
