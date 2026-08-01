@@ -90,7 +90,12 @@ async def answer_question(request: Request, qid: int) -> Response:
 async def issues_index(request: Request) -> Response:
     dbdir = request.app.state.dbdir
     items = await db.run_in_thread(lambda: _list_issues(dbdir))
-    context = {"items": items, "error": request.query_params.get("error")}
+    workdirs = await db.run_in_thread(lambda: registry.list_workdirs(db.connect(dbdir)))
+    context = {
+        "items": items,
+        "workdirs": workdirs,
+        "error": request.query_params.get("error"),
+    }
     return _render(request, "issues.html", context)
 
 
@@ -100,30 +105,36 @@ async def issues_add(request: Request) -> Response:
     form = await request.form()
     url = str(form.get("url") or "").strip()
     workdir = str(form.get("workdir") or "").strip()
-    priority_raw = str(form.get("priority") or "").strip() or "0"
 
     error: str | None = None
     workdir_path = Path(workdir).expanduser()
-    try:
-        priority = int(priority_raw)
-    except ValueError:
-        error = "priority must be an integer"
-        priority = 0
-    if error is None and not workdir_path.is_dir():
+    if not workdir_path.is_dir():
         error = f"workdir not found: {workdir}"
     if error is None:
-        try:
-            await db.run_in_thread(
-                lambda: registry.add(
-                    db.connect(dbdir),
-                    url=url,
-                    workdir=str(workdir_path.resolve()),
-                    priority=priority,
-                )
+
+        def work() -> None:
+            title = registry.fetch_title(url)
+            registry.add(
+                db.connect(dbdir), url=url, workdir=str(workdir_path.resolve()), title=title
             )
+
+        try:
+            await db.run_in_thread(work)
         except RegistryError as exc:
             error = str(exc)
 
+    return await _issues_result(request, dbdir, error)
+
+
+@router.post("/issues/{iid}/move/{direction}")
+async def issues_move(request: Request, iid: int, direction: str) -> Response:
+    dbdir = request.app.state.dbdir
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(lambda: registry.move(db.connect(dbdir), iid, direction))
+    except RegistryError as exc:
+        error = str(exc)
     return await _issues_result(request, dbdir, error)
 
 

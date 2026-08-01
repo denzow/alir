@@ -59,10 +59,19 @@ CREATE TABLE issues (
     session_id TEXT,
     branch TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    title TEXT
 )
 """,
 }
+
+
+def _migrate(conn: iceql.Connection) -> None:
+    """既存 DB への後方互換の列追加。"""
+    try:
+        conn.execute("SELECT title FROM issues LIMIT 1")
+    except iceql.Error:
+        conn.execute("ALTER TABLE issues ADD COLUMN title TEXT")
 
 
 def connect(dbdir: Path) -> iceql.Connection:
@@ -76,6 +85,7 @@ def connect(dbdir: Path) -> iceql.Connection:
     for table, ddl in _DDLS.items():
         if not (dbdir / f"{table}.schema.yaml").exists():
             conn.execute(ddl)
+    _migrate(conn)
     return conn
 
 

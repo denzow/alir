@@ -82,10 +82,8 @@ def issues_group(ctx: click.Context) -> None:
             click.echo("no issues")
             return
         for issue in items:
-            click.echo(
-                f"#{issue.id} [{issue.status}] {issue.ref} "
-                f"(priority: {issue.priority}) {issue.workdir}"
-            )
+            title = f" {issue.title}" if issue.title else ""
+            click.echo(f"#{issue.id} [{issue.status}] {issue.ref}{title} ({issue.workdir})")
 
 
 @issues_group.command("add")
@@ -96,15 +94,15 @@ def issues_group(ctx: click.Context) -> None:
     default=".",
     help="対象リポジトリのローカルパス",
 )
-@click.option("--priority", default=0, show_default=True, type=int, help="大きいほど先に実行する")
-def issues_add(url: str, workdir: Path, priority: int) -> None:
-    """GitHub Issue の URL を queued として登録する。"""
+def issues_add(url: str, workdir: Path) -> None:
+    """GitHub Issue の URL を queued として登録する。タイトルは gh で取得する。"""
     conn = db.connect(data_dir())
+    title = registry.fetch_title(url)
     try:
-        issue = registry.add(conn, url=url, workdir=str(workdir.resolve()), priority=priority)
+        issue = registry.add(conn, url=url, workdir=str(workdir.resolve()), title=title)
     except RegistryError as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"added #{issue.id}: {issue.ref} (priority: {issue.priority})")
+    click.echo(f"added #{issue.id}: {issue.ref} {issue.title or ''}".rstrip())
 
 
 @issues_group.command("import")
@@ -115,13 +113,12 @@ def issues_add(url: str, workdir: Path, priority: int) -> None:
     default=".",
     help="対象リポジトリのローカルパス",
 )
-@click.option("--priority", default=0, show_default=True, type=int)
-def issues_import(label: str, workdir: Path, priority: int) -> None:
+def issues_import(label: str, workdir: Path) -> None:
     """gh CLI でラベル付き Issue を検索して一括登録する(補助コマンド)。"""
     import subprocess
 
     proc = subprocess.run(
-        ["gh", "issue", "list", "--label", label, "--json", "url", "--limit", "100"],
+        ["gh", "issue", "list", "--label", label, "--json", "url,title", "--limit", "100"],
         cwd=workdir,
         capture_output=True,
         text=True,
@@ -135,7 +132,7 @@ def issues_import(label: str, workdir: Path, priority: int) -> None:
     for item in json.loads(proc.stdout):
         try:
             issue = registry.add(
-                conn, url=item["url"], workdir=str(workdir.resolve()), priority=priority
+                conn, url=item["url"], workdir=str(workdir.resolve()), title=item.get("title")
             )
             click.echo(f"added #{issue.id}: {issue.ref}")
         except RegistryError as exc:

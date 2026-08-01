@@ -11,6 +11,11 @@ from alir import db, questions
 from alir.web import create_app
 
 
+@pytest.fixture(autouse=True)
+def _no_gh(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("alir.registry.fetch_title", lambda url: "タイトル取得テスト")
+
+
 @pytest.fixture
 def dbdir(tmp_path: Path) -> Path:
     return tmp_path / "data"
@@ -99,18 +104,54 @@ def test_issues_add_and_list(client: TestClient, dbdir: Path, tmp_path: Path) ->
     workdir.mkdir()
     res = client.post(
         "/issues/add",
-        data={"url": URL, "workdir": str(workdir), "priority": "5"},
+        data={"url": URL, "workdir": str(workdir)},
         follow_redirects=True,
     )
     assert res.status_code == 200
     assert "denzow/alir#12" in res.text
     assert "st-queued" in res.text
+    assert "タイトル取得テスト" in res.text
 
     from alir import registry
 
     conn = db.connect(dbdir)
     issue = registry.get(conn, 1)
-    assert issue.priority == 5
+    assert issue.title == "タイトル取得テスト"
+
+
+def test_workdir_datalist(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir=str(workdir))
+    res = client.get("/issues")
+    assert f'<option value="{workdir}">' in res.text
+
+
+def test_issues_move(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir=str(tmp_path))
+    registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir=str(tmp_path))
+    res = client.post("/issues/2/move/up", follow_redirects=True)
+    assert res.status_code == 200
+
+    conn = db.connect(dbdir)
+    items = [i.id for i in registry.list_issues(conn)]
+    assert items == [2, 1]
+
+
+def test_issues_move_rejects_done(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path))
+    registry.set_status(conn, issue.id, registry.STATUS_DONE)
+    res = client.post(f"/issues/{issue.id}/move/up", follow_redirects=True)
+    assert "can be moved" in res.text
 
 
 def test_issues_add_rejects_bad_workdir(client: TestClient) -> None:

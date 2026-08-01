@@ -4,8 +4,20 @@
   <div class="card-top">
     <span class="status">{{ issue.status }}</span>
     <span>#{{ issue.id }}</span>
-    <span>priority {{ issue.priority }}</span>
+    {% if issue.status in ("queued", "parked") %}
+    <span class="move">
+      <form method="post" action="/issues/{{ issue.id }}/move/up"
+            hx-post="/issues/{{ issue.id }}/move/up" hx-target="#issues" hx-swap="innerHTML">
+        <button aria-label="上へ移動">▲</button>
+      </form>
+      <form method="post" action="/issues/{{ issue.id }}/move/down"
+            hx-post="/issues/{{ issue.id }}/move/down" hx-target="#issues" hx-swap="innerHTML">
+        <button aria-label="下へ移動">▼</button>
+      </form>
+    </span>
+    {% endif %}
   </div>
+  <p class="issue-title">{{ issue.title or issue.ref }}</p>
   <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
   <p class="workdir">{{ issue.workdir }}</p>
   {% if issue.status == "failed" %}

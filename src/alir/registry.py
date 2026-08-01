@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -21,10 +22,14 @@ STATUS_FAILED = "failed"
 
 STATUSES = (STATUS_QUEUED, STATUS_RUNNING, STATUS_PARKED, STATUS_DONE, STATUS_FAILED)
 
+# 並び替えの対象。実行前(queued)と再開待ち(parked)は順序に意味がある。
+REORDERABLE = (STATUS_QUEUED, STATUS_PARKED)
+
 _ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 
 _COLUMNS = (
-    "id, url, repo, number, workdir, priority, status, session_id, branch, created_at, updated_at"
+    "id, url, repo, number, workdir, priority, status, session_id, branch, "
+    "created_at, updated_at, title"
 )
 
 
@@ -45,6 +50,7 @@ class Issue:
     branch: str | None
     created_at: str
     updated_at: str
+    title: str | None = None
 
     @property
     def ref(self) -> str:
@@ -57,7 +63,20 @@ def _now() -> str:
 
 
 def _row_to_issue(row: tuple[object, ...]) -> Issue:
-    (iid, url, repo, number, workdir, priority, status, session_id, branch, created, updated) = row
+    (
+        iid,
+        url,
+        repo,
+        number,
+        workdir,
+        priority,
+        status,
+        session_id,
+        branch,
+        created,
+        updated,
+        title,
+    ) = row
     return Issue(
         id=int(str(iid)),
         url=str(url),
@@ -70,7 +89,21 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         branch=None if branch is None else str(branch),
         created_at=str(created),
         updated_at=str(updated),
+        title=None if title is None else str(title),
     )
+
+
+def fetch_title(url: str) -> str | None:
+    """gh CLI で Issue のタイトルを取得する。取得できなければ None。"""
+    proc = subprocess.run(
+        ["gh", "issue", "view", url, "--json", "title", "-q", ".title"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
 def parse_issue_url(url: str) -> tuple[str, int]:
@@ -87,6 +120,7 @@ def add(
     url: str,
     workdir: str,
     priority: int = 0,
+    title: str | None = None,
 ) -> Issue:
     """Issue を queued として登録する。同じ URL の未完了 Issue があれば拒否する。"""
     repo, number = parse_issue_url(url)
@@ -106,8 +140,8 @@ def add(
         iid = int(str(row[0])) + 1
         now = _now()
         conn.execute(
-            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (iid, url, repo, number, workdir, priority, STATUS_QUEUED, None, None, now, now),
+            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (iid, url, repo, number, workdir, priority, STATUS_QUEUED, None, None, now, now, title),
         )
     return get(conn, iid)
 
@@ -131,6 +165,47 @@ def list_issues(conn: iceql.Connection, *, status: str | None = None) -> list[Is
             (status,),
         )
     return [_row_to_issue(row) for row in cur.fetchall()]
+
+
+def list_workdirs(conn: iceql.Connection) -> list[str]:
+    """登録済みの workdir を新しい順に重複なく返す(入力補完用)。"""
+    cur = conn.execute("SELECT workdir FROM issues ORDER BY id DESC")
+    seen: list[str] = []
+    for (workdir,) in cur.fetchall():
+        text = str(workdir)
+        if text not in seen:
+            seen.append(text)
+    return seen
+
+
+def move(conn: iceql.Connection, iid: int, direction: str) -> Issue:
+    """queued / parked の Issue の並び順を 1 つ上げ下げする。
+
+    並び替えの対象全体に priority を降順で振り直すので、
+    それ以外の状態(done / failed など)の priority には影響しない。
+    端で動かそうとした場合は何もしない。
+    """
+    if direction not in ("up", "down"):
+        raise RegistryError('direction must be "up" or "down"')
+    with db.transaction(conn):
+        issue = get(conn, iid)
+        if issue.status not in REORDERABLE:
+            raise RegistryError(f"issue {iid} is {issue.status}; only queued/parked can be moved")
+        items = [i for i in list_issues(conn) if i.status in REORDERABLE]
+        index = next(i for i, item in enumerate(items) if item.id == iid)
+        target = index - 1 if direction == "up" else index + 1
+        if not (0 <= target < len(items)):
+            return issue
+        items[index], items[target] = items[target], items[index]
+        now = _now()
+        for position, item in enumerate(items):
+            priority = len(items) - position
+            if item.priority != priority:
+                conn.execute(
+                    "UPDATE issues SET priority = ?, updated_at = ? WHERE id = ?",
+                    (priority, now, item.id),
+                )
+    return get(conn, iid)
 
 
 def next_queued(conn: iceql.Connection) -> Issue | None:

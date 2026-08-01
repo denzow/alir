@@ -7,8 +7,10 @@
   <form method="post" action="/issues/add"
         hx-post="/issues/add" hx-target="#issues" hx-swap="innerHTML">
     <input type="text" name="url" placeholder="https://github.com/owner/repo/issues/123">
-    <input type="text" name="workdir" placeholder="対象リポジトリのローカルパス">
-    <input type="text" name="priority" placeholder="優先度 (既定 0、大きいほど先)">
+    <input type="text" name="workdir" list="workdirs" placeholder="対象リポジトリのローカルパス">
+    <datalist id="workdirs">
+      {% for workdir in workdirs %}<option value="{{ workdir }}">{% endfor %}
+    </datalist>
     <button>キューに登録</button>
   </form>
 </div>

@@ -13,8 +13,8 @@ See [plan.md](plan.md) for the overall design (Japanese).
 ## Usage
 
 ```console
-# Register issues to work on
-$ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo --priority 5
+# Register issues to work on (the title is fetched via gh)
+$ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo
 $ alir issues                       # list
 $ alir issues import --label agent-ready --workdir ~/work/repo   # bulk import by label (helper)
 

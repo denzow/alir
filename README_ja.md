@@ -13,8 +13,8 @@ Claude Code が作業中に人間の判断が必要になったとき、質問�
 ## 使い方
 
 ```console
-# 消化対象の Issue を登録する
-$ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo --priority 5
+# 消化対象の Issue を登録する（タイトルは gh で取得される）
+$ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo
 $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
 
