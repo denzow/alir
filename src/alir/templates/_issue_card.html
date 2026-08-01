@@ -1,0 +1,28 @@
+{% macro issue_card(issue, reports, draggable=False, requeue=False) %}
+<div class="card st-{{ issue.status }}"{% if draggable %} data-issue-id="{{ issue.id }}"{% endif %}>
+  <div class="card-top">
+    <span class="status">{{ issue.status }}</span>
+    <span>#{{ issue.id }}</span>
+    {% if draggable %}<span class="drag-handle" aria-label="ドラッグで並び替え">⠿</span>{% endif %}
+  </div>
+  <p class="issue-title">{{ issue.title or issue.ref }}</p>
+  <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
+  <p class="workdir">{{ issue.workdir }}</p>
+  {% set report = reports.get(issue.ref) if reports else none %}
+  {% if report %}
+  <div class="report">
+    <span class="label">last run {{ report.created_at | localtime }}{% if report.outcome == "refined" %} · refined{% endif %}</span>
+    <div>{{ report.summary }}</div>
+    {% if report.pr_url %}
+    <a href="{{ report.pr_url }}">{{ report.pr_url | replace("https://github.com/", "") }}</a>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if requeue and issue.status == "failed" %}
+  <form class="requeue" method="post" action="/issues/{{ issue.id }}/requeue"
+        hx-post="/issues/{{ issue.id }}/requeue" hx-target="#history" hx-swap="innerHTML">
+    <button>キューに戻して再実行</button>
+  </form>
+  {% endif %}
+</div>
+{% endmacro %}

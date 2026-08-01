@@ -101,11 +101,23 @@ async def answer_question(request: Request, qid: int) -> Response:
 
 def _issues_context(conn: Any) -> dict[str, Any]:
     items = registry.list_issues(conn)
+    running = [i for i in items if i.status == registry.STATUS_RUNNING]
+    running.sort(key=lambda i: i.updated_at, reverse=True)
     return {
         "queue_items": [i for i in items if i.status in registry.REORDERABLE],
-        "other_items": [i for i in items if i.status not in registry.REORDERABLE],
+        "running_items": running,
         "reports": reports.latest_by_issue(conn),
     }
+
+
+def _history_context(conn: Any) -> dict[str, Any]:
+    finished = [
+        i
+        for i in registry.list_issues(conn)
+        if i.status in (registry.STATUS_DONE, registry.STATUS_FAILED)
+    ]
+    finished.sort(key=lambda i: i.updated_at, reverse=True)
+    return {"items": finished, "reports": reports.latest_by_issue(conn)}
 
 
 @router.get("/issues")
@@ -172,6 +184,14 @@ async def issues_reorder(request: Request) -> Response:
     return await _issues_result(request, dbdir, error)
 
 
+@router.get("/history")
+async def history_index(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    context = await db.run_in_thread(lambda: _history_context(db.connect(dbdir)))
+    context["error"] = request.query_params.get("error")
+    return _render(request, "history.html", context, fragment="_history_list.html")
+
+
 @router.post("/issues/{iid}/requeue")
 async def issues_requeue(request: Request, iid: int) -> Response:
     dbdir = request.app.state.dbdir
@@ -189,7 +209,14 @@ async def issues_requeue(request: Request, iid: int) -> Response:
         await db.run_in_thread(work)
     except RegistryError as exc:
         error = str(exc)
-    return await _issues_result(request, dbdir, error)
+
+    if _is_htmx(request):
+        context = await db.run_in_thread(lambda: _history_context(db.connect(dbdir)))
+        context["error"] = error
+        return _render(request, "_history_list.html", context, fragment="_history_list.html")
+    if error:
+        return RedirectResponse(f"/history?error={quote(error)}", 303)
+    return RedirectResponse("/history", 303)
 
 
 async def _issues_result(

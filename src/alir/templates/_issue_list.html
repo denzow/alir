@@ -1,41 +1,14 @@
-{% macro issue_card(issue, draggable=False) %}
-<div class="card st-{{ issue.status }}"{% if draggable %} data-issue-id="{{ issue.id }}"{% endif %}>
-  <div class="card-top">
-    <span class="status">{{ issue.status }}</span>
-    <span>#{{ issue.id }}</span>
-    {% if draggable %}<span class="drag-handle" aria-label="ドラッグで並び替え">⠿</span>{% endif %}
-  </div>
-  <p class="issue-title">{{ issue.title or issue.ref }}</p>
-  <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
-  <p class="workdir">{{ issue.workdir }}</p>
-  {% set report = reports.get(issue.ref) if reports else none %}
-  {% if report %}
-  <div class="report">
-    <span class="label">last run {{ report.created_at | localtime }}{% if report.outcome == "refined" %} · refined{% endif %}</span>
-    <div>{{ report.summary }}</div>
-    {% if report.pr_url %}
-    <a href="{{ report.pr_url }}">{{ report.pr_url | replace("https://github.com/", "") }}</a>
-    {% endif %}
-  </div>
-  {% endif %}
-  {% if issue.status == "failed" %}
-  <form class="requeue" method="post" action="/issues/{{ issue.id }}/requeue"
-        hx-post="/issues/{{ issue.id }}/requeue" hx-target="#issues" hx-swap="innerHTML">
-    <button>キューに戻して再実行</button>
-  </form>
-  {% endif %}
-</div>
-{% endmacro %}
+{% import "_issue_card.html" as cards %}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
-{% if queue_items or other_items %}
+{% if queue_items or running_items %}
 <h2 class="section-label">キュー (ドラッグで並び替え)</h2>
 <div id="queue-list">
-  {% for issue in queue_items %}{{ issue_card(issue, draggable=True) }}{% endfor %}
+  {% for issue in queue_items %}{{ cards.issue_card(issue, reports, draggable=True) }}{% endfor %}
 </div>
 {% if not queue_items %}<p class="empty-inline">キューは空です。</p>{% endif %}
-{% if other_items %}
-<h2 class="section-label">実行中と完了済み</h2>
-{% for issue in other_items %}{{ issue_card(issue) }}{% endfor %}
+{% if running_items %}
+<h2 class="section-label">実行中</h2>
+{% for issue in running_items %}{{ cards.issue_card(issue, reports) }}{% endfor %}
 {% endif %}
 {% else %}
 <p class="empty">登録された Issue はありません。<br>上のフォームから消化したい Issue を追加できます。</p>

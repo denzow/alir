@@ -195,10 +195,42 @@ def test_issues_requeue_failed(client: TestClient, dbdir: Path, tmp_path: Path) 
     registry.set_status(conn, issue.id, registry.STATUS_FAILED)
 
     res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
-    assert "st-queued" in res.text
+    assert res.status_code == 200
+    assert 'card st-failed' not in res.text  # requeue されて history から消える
 
     conn = db.connect(dbdir)
     assert registry.get(conn, issue.id).status == registry.STATUS_QUEUED
+
+
+def test_history_page_shows_finished_newest_first(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    a = registry.add(conn, url=URL, workdir=str(tmp_path))
+    b = registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir=str(tmp_path))
+    registry.set_status(conn, a.id, registry.STATUS_DONE)
+    import time as time_mod
+
+    time_mod.sleep(1.1)  # updated_at が秒精度のため
+    registry.set_status(conn, b.id, registry.STATUS_FAILED)
+
+    res = client.get("/history")
+    assert res.status_code == 200
+    assert res.text.index("denzow/alir#13") < res.text.index("denzow/alir#12")
+    assert "キューに戻して再実行" in res.text
+
+
+def test_issues_page_excludes_finished(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path))
+    registry.set_status(conn, issue.id, registry.STATUS_DONE)
+    res = client.get("/issues")
+    assert 'card st-done' not in res.text
+    assert "登録された Issue はありません" in res.text
 
 
 def test_issues_requeue_rejects_non_failed(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
