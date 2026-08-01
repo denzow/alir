@@ -1,0 +1,30 @@
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% for q in items %}
+<div class="card">
+  <div class="meta">#{{ q.id }} [{{ q.status }}] {{ q.issue }}
+    (impact: {{ q.impact }}, timeout: {{ q.timeout_action }})</div>
+  <p class="question">{{ q.question }}</p>
+  {% if q.status == "open" %}
+  <form method="post" action="/questions/{{ q.id }}/answer"
+        hx-post="/questions/{{ q.id }}/answer" hx-target="#questions" hx-swap="innerHTML">
+    <input type="hidden" name="show_all" value="{{ '1' if show_all else '' }}">
+    <input type="text" name="note" placeholder="補足(任意)">
+    <div class="options">
+      {% for option in q.options %}
+      <button name="choice" value="{{ loop.index }}"
+              {% if option == q.recommended %}class="recommended"{% endif %}>
+        {{- option }}{% if option == q.recommended %} (推奨){% endif %}</button>
+      {% endfor %}
+    </div>
+    <div class="free">
+      <input type="text" name="free" placeholder="自由記述で回答">
+      <button name="choice" value="free">自由記述で回答</button>
+    </div>
+  </form>
+  {% else %}
+  <p class="answered">A: {{ q.answer }}{% if q.answer_note %} ({{ q.answer_note }}){% endif %}</p>
+  {% endif %}
+</div>
+{% else %}
+<p>no questions</p>
+{% endfor %}

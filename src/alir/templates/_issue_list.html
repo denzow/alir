@@ -1,0 +1,16 @@
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% for issue in items %}
+<div class="card">
+  <div class="meta">#{{ issue.id }} [{{ issue.status }}] priority: {{ issue.priority }}</div>
+  <p><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
+  <p class="meta">{{ issue.workdir }}</p>
+  {% if issue.status == "failed" %}
+  <form method="post" action="/issues/{{ issue.id }}/requeue"
+        hx-post="/issues/{{ issue.id }}/requeue" hx-target="#issues" hx-swap="innerHTML">
+    <button>再実行 (queued に戻す)</button>
+  </form>
+  {% endif %}
+</div>
+{% else %}
+<p>no issues</p>
+{% endfor %}

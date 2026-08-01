@@ -154,3 +154,45 @@ def test_issues_requeue_rejects_non_failed(client: TestClient, dbdir: Path, tmp_
 
     res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
     assert "not failed" in res.text
+
+
+def test_htmx_answer_returns_fragment(client: TestClient, dbdir: Path) -> None:
+    _ask(dbdir)
+    res = client.post(
+        "/questions/1/answer",
+        data={"choice": "1", "show_all": ""},
+        headers={"HX-Request": "true"},
+    )
+    assert res.status_code == 200
+    assert "<html" not in res.text
+    assert "no questions" in res.text
+
+
+def test_htmx_answer_error_shown_in_fragment(client: TestClient, dbdir: Path) -> None:
+    _ask(dbdir)
+    res = client.post(
+        "/questions/1/answer",
+        data={"choice": "9"},
+        headers={"HX-Request": "true"},
+    )
+    assert "<html" not in res.text
+    assert "out of range" in res.text
+    assert "DB スキーマを変更してよいか" in res.text
+
+
+def test_htmx_issues_add_returns_fragment(client: TestClient, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/issues/add",
+        data={"url": URL, "workdir": str(workdir)},
+        headers={"HX-Request": "true"},
+    )
+    assert "<html" not in res.text
+    assert "denzow/alir#12" in res.text
+
+
+def test_static_htmx_served(client: TestClient) -> None:
+    res = client.get("/static/htmx.min.js")
+    assert res.status_code == 200
+    assert "htmx" in res.text[:200]

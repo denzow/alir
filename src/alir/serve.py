@@ -9,19 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from starlette.applications import Starlette
-from starlette.routing import Mount
+from fastapi import FastAPI
 
 from alir import mcp_server, web
 
 
-def create_combined_app(dbdir: Path) -> Starlette:
+def create_combined_app(dbdir: Path) -> FastAPI:
     """Web UI のルートと MCP(/mcp)を同居させた ASGI アプリを返す。"""
     server = mcp_server.create_server(dbdir)
     mcp_app = server.streamable_http_app()  # 内部で /mcp を提供する
-    app = Starlette(
-        routes=[*web.app_routes(), Mount("/", app=mcp_app)],
-        lifespan=lambda app: server.session_manager.run(),
-    )
-    app.state.dbdir = dbdir
+    app = web.create_app(dbdir, lifespan=lambda app: server.session_manager.run())
+    app.mount("/", mcp_app)
     return app
