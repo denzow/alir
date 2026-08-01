@@ -8,7 +8,7 @@
   <p class="issue-title">{{ issue.title or issue.ref }}</p>
   <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
   <p class="workdir">{{ issue.workdir }}</p>
-  {% set report = reports.get(issue.ref) if reports else none %}
+  {% set report = reports.get(issue.id) if reports else none %}
   {% if report %}
   <div class="report">
     <span class="label">last run {{ report.created_at | localtime }}{% if report.outcome == "refined" %} · refined{% endif %}</span>

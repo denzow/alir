@@ -477,3 +477,25 @@ def test_sessions_page_excludes_previous_session_progress(
     res = client.get("/sessions")
     assert "今回セッションの進捗" in res.text
     assert "前回セッションの進捗" not in res.text
+
+
+def test_history_reports_scoped_to_each_registration(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    """同じ Issue を複数回登録しても、報告は各登録の実行期間内のものだけ紐づく。"""
+    import time as time_mod
+
+    from alir import registry, reports
+
+    conn = db.connect(dbdir)
+    first = registry.add(conn, url=URL, workdir=str(tmp_path))
+    reports.add(conn, issue="denzow/alir#12", summary="1回目の実行報告")
+    registry.set_status(conn, first.id, registry.STATUS_DONE)
+    time_mod.sleep(1.1)  # created_at / updated_at が秒精度のため
+
+    second = registry.add(conn, url=URL, workdir=str(tmp_path))
+    registry.set_status(conn, second.id, registry.STATUS_DONE)
+
+    res = client.get("/history")
+    # 1 回目の報告は 1 回目のカードにだけ表示される
+    assert res.text.count("1回目の実行報告") == 1

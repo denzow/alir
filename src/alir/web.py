@@ -99,14 +99,35 @@ async def answer_question(request: Request, qid: int) -> Response:
     return RedirectResponse("/", 303)
 
 
+def _reports_by_entry(conn: Any, issues: list[Any]) -> dict[int, Any]:
+    """登録エントリごとに、その実行期間内の最新の報告を対応づける。
+
+    報告は GitHub の ref でしか記録されないため、同じ Issue を複数回登録した
+    場合に備えて「登録時刻以降(終了済みなら終了時刻まで)」の報告に絞る。
+    """
+    all_reports = reports.list_reports(conn, limit=1000)  # 新しい順
+    finished = (registry.STATUS_DONE, registry.STATUS_FAILED)
+    mapping: dict[int, Any] = {}
+    for issue in issues:
+        for report in all_reports:
+            if report.issue != issue.ref or report.created_at < issue.created_at:
+                continue
+            if issue.status in finished and report.created_at > issue.updated_at:
+                continue
+            mapping[issue.id] = report
+            break
+    return mapping
+
+
 def _issues_context(conn: Any) -> dict[str, Any]:
     items = registry.list_issues(conn)
     running = [i for i in items if i.status == registry.STATUS_RUNNING]
     running.sort(key=lambda i: i.updated_at, reverse=True)
+    shown = [i for i in items if i.status in registry.REORDERABLE] + running
     return {
         "queue_items": [i for i in items if i.status in registry.REORDERABLE],
         "running_items": running,
-        "reports": reports.latest_by_issue(conn),
+        "reports": _reports_by_entry(conn, shown),
     }
 
 
@@ -117,7 +138,7 @@ def _history_context(conn: Any) -> dict[str, Any]:
         if i.status in (registry.STATUS_DONE, registry.STATUS_FAILED)
     ]
     finished.sort(key=lambda i: i.updated_at, reverse=True)
-    return {"items": finished, "reports": reports.latest_by_issue(conn)}
+    return {"items": finished, "reports": _reports_by_entry(conn, finished)}
 
 
 @router.get("/issues")
