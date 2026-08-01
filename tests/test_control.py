@@ -83,3 +83,38 @@ def test_run_loop_records_heartbeat_and_events(dbdir: Path) -> None:
     messages = [e.message for e in control.recent_events(conn)]
     assert any(m.startswith("start #1") for m in messages)
     assert any(m.startswith("finish #1") for m in messages)
+
+
+def test_run_loop_cycles_while_session_running(dbdir: Path) -> None:
+    """セッション実行中もサイクルが回り、空き枠に新しい Issue が補充される。"""
+    import threading
+
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir="/tmp")
+
+    b_finished = threading.Event()
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        if "issues/12" in prompt:
+            conn2 = db.connect(dbdir)
+            registry.add(conn2, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
+            assert b_finished.wait(timeout=5), "issue B did not start while A was running"
+            return RunResult(exit_code=0, session_id=None, output="a")
+        b_finished.set()
+        return RunResult(exit_code=0, session_id=None, output="b")
+
+    driver.run_loop(
+        dbdir,
+        once=True,
+        parallel=2,
+        interval=0.05,
+        runner=runner,
+        worktree=_fake_worktree,
+        log=lambda _: None,
+    )
+    conn = db.connect(dbdir)
+    statuses = {i.ref: i.status for i in registry.list_issues(conn)}
+    assert statuses == {
+        "denzow/alir#12": registry.STATUS_DONE,
+        "denzow/alir#13": registry.STATUS_DONE,
+    }

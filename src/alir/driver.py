@@ -305,8 +305,11 @@ def run_loop(
                 time.sleep(interval)
                 continue
 
+            # timeout 付きで待ち、セッション実行中もサイクルを回す。
+            # これによりハートビートの更新、空き枠への補充、
+            # 一時停止フラグの反映がセッション完了を待たずに行われる。
             done, _ = concurrent.futures.wait(
-                active, return_when=concurrent.futures.FIRST_COMPLETED
+                active, timeout=interval, return_when=concurrent.futures.FIRST_COMPLETED
             )
             for future in done:
                 iid = active.pop(future)
