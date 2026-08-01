@@ -96,6 +96,10 @@ def build_prompt(issue: Issue, branch: str, *, answers: list[questions.Question]
         "5. 終了する前に report_result MCP ツールで実施内容を 1 行で報告する。",
         f'   issue パラメータには "{issue.ref}"、PR を作成した場合は pr_url も渡す。',
         "",
+        "作業の節目(調査を終えた、実装に入った、テストを回した、PR を作った、など)ごとに、",
+        "report_progress MCP ツールで進捗を 1 行報告する。"
+        f'issue パラメータには "{issue.ref}" を渡す。',
+        "",
         "人間の判断が必要になったら ask_human MCP ツールで質問を登録する。",
         f'issue パラメータには "{issue.ref}" を渡す。',
         "質問は不可逆または高影響の判断に限る。低影響の判断は推奨案で進めて PR に記載する。",
@@ -149,7 +153,7 @@ def run_claude(
         "--mcp-config",
         str(write_mcp_config(dbdir, mcp_url=mcp_url)),
         "--allowedTools",
-        "mcp__alir__ask_human,mcp__alir__report_result",
+        "mcp__alir__ask_human,mcp__alir__report_result,mcp__alir__report_progress",
     ]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")

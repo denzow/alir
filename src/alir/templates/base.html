@@ -251,6 +251,7 @@ button:hover { border-color: var(--accent); }
   <a class="brand" href="/">alir</a>
   <a class="tab {% if request.url.path == '/' %}active{% endif %}" href="/">questions</a>
   <a class="tab {% if request.url.path.startswith('/issues') %}active{% endif %}" href="/issues">issues</a>
+  <a class="tab {% if request.url.path.startswith('/sessions') %}active{% endif %}" href="/sessions">sessions</a>
   <a class="tab {% if request.url.path.startswith('/loop') %}active{% endif %}" href="/loop">loop</a>
 </nav>
 <main>

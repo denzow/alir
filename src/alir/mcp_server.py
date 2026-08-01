@@ -10,7 +10,7 @@ from typing import Any
 
 import iceql
 
-from alir import db, notify, questions, reports
+from alir import db, notify, progress, questions, reports
 
 
 def ask_human_tool(
@@ -44,6 +44,18 @@ def ask_human_tool(
             "Do not wait for the answer: summarize the current state and finish this session."
         ),
     }
+
+
+def report_progress_tool(
+    conn: iceql.Connection,
+    *,
+    issue: str,
+    message: str,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """進捗を記録し、登録結果を返す。"""
+    entry = progress.add(conn, issue=issue, message=message, session_id=session_id)
+    return {"progress_id": entry.id, "message": "Recorded."}
 
 
 def report_result_tool(
@@ -106,6 +118,25 @@ def create_server(dbdir: str | Path) -> Any:
             timeout_action=timeout_action,
             session_id=session_id,
         )
+
+    @server.tool()
+    def report_progress(
+        issue: str,
+        message: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Report a one-line progress update while working on an issue.
+
+        Call this at each meaningful checkpoint: finished investigating,
+        started implementing, running tests, opening a PR, and so on.
+        A human watches these updates live, so keep each message short.
+
+        Args:
+            issue: Target issue as "owner/repo#number".
+            message: One-line progress update, e.g. "調査完了、実装に着手".
+            session_id: Claude Code session id, if known.
+        """
+        return report_progress_tool(conn, issue=issue, message=message, session_id=session_id)
 
     @server.tool()
     def report_result(

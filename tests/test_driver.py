@@ -125,3 +125,11 @@ def test_prompt_instructs_report_result(dbdir: Path) -> None:
     driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
     prompt = runner.prompts[0]  # type: ignore[attr-defined]
     assert "report_result" in prompt
+
+
+def test_prompt_instructs_report_progress(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "report_progress" in prompt

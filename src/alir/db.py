@@ -60,6 +60,15 @@ CREATE TABLE control (
     value TEXT NOT NULL
 )
 """,
+    "progress": """
+CREATE TABLE progress (
+    id INTEGER PRIMARY KEY,
+    issue TEXT NOT NULL,
+    session_id TEXT,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)
+""",
     "reports": """
 CREATE TABLE reports (
     id INTEGER PRIMARY KEY,

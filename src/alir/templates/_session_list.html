@@ -1,0 +1,20 @@
+{% for session in sessions %}
+<div class="card st-running">
+  <div class="card-top">
+    <span class="status">running</span>
+    <span>#{{ session.issue.id }}</span>
+    <span>since {{ session.issue.updated_at | localtime }} ({{ session.elapsed_min }} 分経過)</span>
+  </div>
+  <p class="issue-title">{{ session.issue.title or session.issue.ref }}</p>
+  <p class="issue-ref"><a href="{{ session.issue.url }}">{{ session.issue.ref }}</a></p>
+  <div class="events">
+    {% for entry in session.entries %}
+    <div class="event"><span class="event-at">{{ entry.created_at | localtime }}</span>{{ entry.message }}</div>
+    {% else %}
+    <p class="empty-inline">まだ進捗の報告はありません。</p>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<p class="empty">実行中のセッションはありません。<br>ドライバが Issue を開始するとここに表示されます。</p>
+{% endfor %}

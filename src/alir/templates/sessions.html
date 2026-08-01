@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>実行中のセッション</h1>
+</div>
+<div id="sessions" hx-get="/sessions" hx-trigger="every 5s" hx-swap="innerHTML">
+{% include "_session_list.html" %}
+</div>
+{% endblock %}

@@ -7,7 +7,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -17,7 +17,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, questions, registry, reports
+from alir import control, db, progress, questions, registry, reports
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
 
@@ -208,6 +208,29 @@ async def _issues_result(
     if error:
         return RedirectResponse(f"/issues?error={quote(error)}", 303)
     return RedirectResponse("/issues", 303)
+
+
+@router.get("/sessions")
+async def sessions_index(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+
+    def work() -> dict[str, Any]:
+        conn = db.connect(dbdir)
+        now = datetime.now(timezone.utc)
+        sessions = []
+        for issue in registry.list_issues(conn, status=registry.STATUS_RUNNING):
+            started = datetime.fromisoformat(issue.updated_at)
+            sessions.append(
+                {
+                    "issue": issue,
+                    "entries": progress.list_progress(conn, issue=issue.ref),
+                    "elapsed_min": int((now - started).total_seconds() // 60),
+                }
+            )
+        return {"sessions": sessions}
+
+    context = await db.run_in_thread(work)
+    return _render(request, "sessions.html", context, fragment="_session_list.html")
 
 
 async def _loop_context(dbdir: Path) -> dict[str, Any]:

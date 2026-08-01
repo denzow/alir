@@ -336,3 +336,29 @@ def test_issues_add_error_has_no_trigger_header(client: TestClient) -> None:
         headers={"HX-Request": "true"},
     )
     assert "HX-Trigger" not in res.headers
+
+
+def test_sessions_page_empty(client: TestClient, dbdir: Path) -> None:
+    res = client.get("/sessions")
+    assert res.status_code == 200
+    assert "実行中のセッションはありません" in res.text
+
+
+def test_sessions_page_shows_running_with_progress(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    from alir import progress, registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path), title="設定の TOML 移行")
+    registry.set_status(conn, issue.id, registry.STATUS_RUNNING)
+    progress.add(conn, issue="denzow/alir#12", message="調査完了、実装に着手")
+
+    res = client.get("/sessions")
+    assert "設定の TOML 移行" in res.text
+    assert "調査完了、実装に着手" in res.text
+    assert "分経過" in res.text
+
+    res = client.get("/sessions", headers={"HX-Request": "true"})
+    assert "<html" not in res.text
+    assert "調査完了、実装に着手" in res.text
