@@ -249,10 +249,17 @@ async def sessions_index(request: Request) -> Response:
         sessions = []
         for issue in registry.list_issues(conn, status=registry.STATUS_RUNNING):
             started = datetime.fromisoformat(issue.updated_at)
+            # 同じ Issue の過去セッションの進捗を混ぜない
+            # (updated_at は running へ遷移した時刻 = このセッションの開始時刻)
+            entries = [
+                p
+                for p in progress.list_progress(conn, issue=issue.ref)
+                if p.created_at >= issue.updated_at
+            ]
             sessions.append(
                 {
                     "issue": issue,
-                    "entries": progress.list_progress(conn, issue=issue.ref),
+                    "entries": entries,
                     "elapsed_min": int((now - started).total_seconds() // 60),
                 }
             )

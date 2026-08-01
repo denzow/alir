@@ -457,3 +457,23 @@ def test_sessions_page_shows_recent_reports(client: TestClient, dbdir: Path) -> 
     assert "報告5" in res.text
     assert "報告1" not in res.text  # 直近 5 件に含まれない
     assert "st-open" in res.text  # refined はアンバー表示
+
+
+def test_sessions_page_excludes_previous_session_progress(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    """同じ Issue の過去セッションの進捗は表示しない。"""
+    import time as time_mod
+
+    from alir import progress, registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path))
+    progress.add(conn, issue="denzow/alir#12", message="前回セッションの進捗")
+    time_mod.sleep(1.1)  # created_at / updated_at が秒精度のため
+    registry.set_status(conn, issue.id, registry.STATUS_RUNNING)
+    progress.add(conn, issue="denzow/alir#12", message="今回セッションの進捗")
+
+    res = client.get("/sessions")
+    assert "今回セッションの進捗" in res.text
+    assert "前回セッションの進捗" not in res.text
