@@ -60,11 +60,38 @@ def _git(workdir: Path, *args: str) -> str:
     return proc.stdout
 
 
+def _default_branch_ref(workdir: Path) -> str | None:
+    """新しいブランチの基点となるデフォルトブランチの ref を返す。
+
+    origin/HEAD の指す先 → origin/main → origin/master → main → master の順で
+    探し、見つからなければ None(現在の HEAD から分岐する)。
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(workdir), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout.strip()
+    for ref in ("origin/main", "origin/master", "main", "master"):
+        verify = subprocess.run(
+            ["git", "-C", str(workdir), "rev-parse", "--verify", "--quiet", ref],
+            capture_output=True,
+            check=False,
+        )
+        if verify.returncode == 0:
+            return ref
+    return None
+
+
 def setup_worktree(issue: Issue) -> tuple[Path, str]:
     """Issue 用の worktree とブランチを用意し、(パス, ブランチ名) を返す。
 
     worktree は対象リポジトリの隣(<repo>-alir/issue-<n>)に置く。
     すでに存在すればそのまま再利用する(park からの再開)。
+    新しくブランチを切るときはデフォルトブランチ(main / master)を fetch で
+    最新化し、その先端を基点にする。workdir のチェックアウトは変更しない。
     """
     workdir = Path(issue.workdir)
     branch = f"alir/issue-{issue.number}"
@@ -74,8 +101,17 @@ def setup_worktree(issue: Issue) -> tuple[Path, str]:
     path.parent.mkdir(parents=True, exist_ok=True)
     if _git(workdir, "branch", "--list", branch).strip():
         _git(workdir, "worktree", "add", str(path), branch)
-    else:
-        _git(workdir, "worktree", "add", "-b", branch, str(path))
+        return path, branch
+
+    base = _default_branch_ref(workdir)
+    if base is not None and base.startswith("origin/"):
+        # fetch の失敗(オフラインなど)は致命的でないので手元の ref から続行する
+        with contextlib.suppress(DriverError):
+            _git(workdir, "fetch", "origin", base.removeprefix("origin/"))
+    args = ["worktree", "add", "-b", branch, str(path)]
+    if base is not None:
+        args.append(base)
+    _git(workdir, *args)
     return path, branch
 
 

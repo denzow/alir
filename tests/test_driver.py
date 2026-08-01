@@ -133,3 +133,75 @@ def test_prompt_instructs_report_progress(dbdir: Path) -> None:
     driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
     prompt = runner.prompts[0]  # type: ignore[attr-defined]
     assert "report_progress" in prompt
+
+
+def _run_git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "-C", str(cwd), "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _make_issue(workdir: Path) -> registry.Issue:
+    return registry.Issue(
+        id=1,
+        url=URL,
+        repo="denzow/alir",
+        number=12,
+        workdir=str(workdir),
+        priority=0,
+        status=registry.STATUS_QUEUED,
+        session_id=None,
+        branch=None,
+        created_at="t",
+        updated_at="t",
+    )
+
+
+def test_setup_worktree_bases_on_latest_default_branch(tmp_path: Path) -> None:
+    """clone が古くても、fetch した origin のデフォルトブランチ先端から分岐する。"""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run_git(seed, "init", "-b", "main")
+    (seed / "a.txt").write_text("1")
+    _run_git(seed, "add", ".")
+    _run_git(seed, "commit", "-m", "c1")
+
+    origin = tmp_path / "origin.git"
+    _run_git(tmp_path, "clone", "--bare", str(seed), str(origin))
+
+    work = tmp_path / "repo"
+    _run_git(tmp_path, "clone", str(origin), str(work))
+
+    # clone 後に origin 側だけ進める(work の origin/main は古いまま)
+    (seed / "a.txt").write_text("2")
+    _run_git(seed, "commit", "-am", "c2")
+    _run_git(seed, "push", str(origin), "main")
+    latest = _run_git(seed, "rev-parse", "HEAD")
+
+    path, branch = driver.setup_worktree(_make_issue(work))
+    assert branch == "alir/issue-12"
+    assert _run_git(path, "rev-parse", "HEAD") == latest
+
+
+def test_setup_worktree_without_remote_uses_local_default(tmp_path: Path) -> None:
+    work = tmp_path / "repo"
+    work.mkdir()
+    _run_git(work, "init", "-b", "main")
+    (work / "a.txt").write_text("1")
+    _run_git(work, "add", ".")
+    _run_git(work, "commit", "-m", "c1")
+    # 別ブランチをチェックアウトした状態でも main から分岐する
+    _run_git(work, "switch", "-c", "wip")
+    (work / "b.txt").write_text("wip")
+    _run_git(work, "add", ".")
+    _run_git(work, "commit", "-m", "wip commit")
+    main_rev = _run_git(work, "rev-parse", "main")
+
+    path, _branch = driver.setup_worktree(_make_issue(work))
+    assert _run_git(path, "rev-parse", "HEAD") == main_rev
