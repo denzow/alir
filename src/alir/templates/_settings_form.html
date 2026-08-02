@@ -1,5 +1,6 @@
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 {% if saved %}<p class="saved">保存しました。次に開始するセッションから使われます。</p>{% endif %}
+{% if notice %}<p class="saved">{{ notice }}</p>{% endif %}
 <div class="card add-form">
   <form method="post" action="/settings"
         hx-post="/settings" hx-target="#settings" hx-swap="innerHTML">
@@ -90,4 +91,42 @@
     </div>
     <button>設定を追加</button>
   </form>
+</div>
+<p class="section-label">Pushover 通知</p>
+<div class="card add-form">
+  <p class="hint">
+    質問の登録やリトライ上限の到達を Pushover へ通知する。
+    ここで保存した認証情報が優先され、未設定なら環境変数
+    (<code>ALIR_PUSHOVER_TOKEN</code> / <code>ALIR_PUSHOVER_USER</code>)を使う。
+  </p>
+  {% if pushover_status == "settings" %}
+  <form method="post" action="/settings/pushover/clear"
+        hx-post="/settings/pushover/clear" hx-target="#settings" hx-swap="innerHTML"
+        class="target-row">
+    <span class="target-desc">設定済み(この画面で保存)</span>
+    <button>削除</button>
+  </form>
+  {% elif pushover_status == "environment" %}
+  <p class="empty-inline">設定済み(環境変数)。保存するとそちらが優先される。</p>
+  {% else %}
+  <p class="empty-inline">Pushover はまだ設定されていません。</p>
+  {% endif %}
+  <form method="post" action="/settings/pushover/set"
+        hx-post="/settings/pushover/set" hx-target="#settings" hx-swap="innerHTML">
+    <div class="field">
+      <label for="pushover-token">API トークン</label>
+      <input id="pushover-token" type="password" name="token" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="pushover-user">ユーザーキー</label>
+      <input id="pushover-user" type="password" name="user" autocomplete="off">
+    </div>
+    <button>保存する</button>
+  </form>
+  {% if pushover_status %}
+  <form method="post" action="/settings/pushover/test"
+        hx-post="/settings/pushover/test" hx-target="#settings" hx-swap="innerHTML">
+    <button>テスト通知を送る</button>
+  </form>
+  {% endif %}
 </div>

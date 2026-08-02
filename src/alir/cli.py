@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -290,6 +291,60 @@ def model_clear() -> None:
     """モデルの設定を消し、claude の既定に戻す。"""
     settings.clear_model(db.connect(data_dir()))
     click.echo("cleared")
+
+
+@main.group("pushover", invoke_without_command=True)
+@click.pass_context
+def pushover_group(ctx: click.Context) -> None:
+    """Pushover 通知の連携を操作する。サブコマンドなしなら設定状態を表示する。"""
+    if ctx.invoked_subcommand is None:
+        from alir import notify
+
+        source = notify.pushover_source()
+        click.echo(f"configured ({source})" if source else "not set")
+
+
+@pushover_group.command("set")
+@click.option(
+    "--token",
+    prompt="API token",
+    hide_input=True,
+    help="Pushover の API トークン。省略すると非表示で入力を求める",
+)
+@click.option("--user", prompt="User key", help="Pushover のユーザーキー")
+def pushover_set(token: str, user: str) -> None:
+    """Pushover の認証情報を設定する。次の通知から使われる。"""
+    conn = db.connect(data_dir())
+    try:
+        settings.set_pushover(conn, token=token, user=user)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("set")
+
+
+@pushover_group.command("clear")
+def pushover_clear() -> None:
+    """Pushover の認証情報を消す(環境変数があればそちらに戻る)。"""
+    settings.clear_pushover(db.connect(data_dir()))
+    click.echo("cleared")
+
+
+@pushover_group.command("test")
+def pushover_test() -> None:
+    """テスト通知を送り、連携設定を確認する。"""
+    from alir import notify
+
+    try:
+        sent = notify.send_pushover(
+            "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(f"failed to send: {exc}") from exc
+    if not sent:
+        raise click.ClickException(
+            "not configured: alir pushover set --token ... --user ... で設定する"
+        )
+    click.echo("sent")
 
 
 @main.group("resume", invoke_without_command=True)

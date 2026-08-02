@@ -121,7 +121,11 @@ def test_notify_question_swallows_channel_errors(conn, monkeypatch) -> None:  # 
     notify.notify_question(q)
 
 
-def test_send_pushover_noop_without_credentials(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_send_pushover_noop_without_credentials(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from alir.config import ENV_DATA_DIR
+
+    # 実環境の settings(alir pushover set)を読まないよう data dir も切り替える
+    monkeypatch.setenv(ENV_DATA_DIR, str(tmp_path / "data"))
     monkeypatch.delenv(notify.ENV_PUSHOVER_TOKEN, raising=False)
     monkeypatch.delenv(notify.ENV_PUSHOVER_USER, raising=False)
 

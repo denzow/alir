@@ -1,7 +1,9 @@
 """通知: 質問の登録やリトライ上限の到達を Pushover とデスクトップに知らせる。
 
 通知は補助機能なので、失敗しても元の処理は成功させる(best-effort)。
-Pushover は環境変数 ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER があるときだけ送る。
+Pushover の認証情報は settings(alir pushover set)を優先し、
+未設定なら環境変数 ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER を使う。
+どちらもなければ送らない。
 通知に含める Web UI の URL は ALIR_WEB_URL(例: http://192.168.1.10:8710)で指定する。
 """
 
@@ -14,6 +16,9 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+import iceql
+
+from alir import config, db, settings
 from alir.questions import Question
 from alir.registry import Issue
 
@@ -35,18 +40,50 @@ def send_desktop(message: str) -> None:
     subprocess.run(["notify-send", "alir", message], check=False, capture_output=True)
 
 
-def send_pushover(message: str, *, url: str | None) -> None:
-    """Pushover に通知を送る。認証情報がなければ何もしない。"""
+def pushover_credentials() -> tuple[str, str] | None:
+    """Pushover の認証情報を settings、なければ環境変数から読む。"""
+    # settings の読み取り失敗(データディレクトリ未作成など)は環境変数で継続する
+    with contextlib.suppress(Exception):
+        creds = settings.pushover(db.connect(config.data_dir()))
+        if creds is not None:
+            return creds
     token = os.environ.get(ENV_PUSHOVER_TOKEN)
     user = os.environ.get(ENV_PUSHOVER_USER)
-    if not token or not user:
-        return
+    if token and user:
+        return token, user
+    return None
+
+
+def pushover_source(conn: iceql.Connection | None = None) -> str | None:
+    """認証情報の出所を返す。"settings" / "environment" / None(未設定)。
+
+    CLI と Web UI が設定状態の表示に使う。判定は pushover_credentials と
+    同じで、settings の読み取り失敗は環境変数の判定に落ちる。
+    conn を渡すとその接続の settings で判定する(Web UI は自分の dbdir を使う)。
+    """
+    with contextlib.suppress(Exception):
+        if conn is None:
+            conn = db.connect(config.data_dir())
+        if settings.pushover(conn) is not None:
+            return "settings"
+    if os.environ.get(ENV_PUSHOVER_TOKEN) and os.environ.get(ENV_PUSHOVER_USER):
+        return "environment"
+    return None
+
+
+def send_pushover(message: str, *, url: str | None) -> bool:
+    """Pushover に通知を送る。認証情報がなければ何もせず False を返す。"""
+    creds = pushover_credentials()
+    if creds is None:
+        return False
+    token, user = creds
     fields = {"token": token, "user": user, "title": "alir", "message": message}
     if url:
         fields["url"] = url
     data = urllib.parse.urlencode(fields).encode("utf-8")
     with urllib.request.urlopen(_PUSHOVER_API, data=data, timeout=10):
         pass
+    return True
 
 
 def notify_message(message: str) -> None:

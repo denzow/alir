@@ -8,6 +8,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,18 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, importer, progress, questions, registry, reports, retry, settings
+from alir import (
+    control,
+    db,
+    importer,
+    notify,
+    progress,
+    questions,
+    registry,
+    reports,
+    retry,
+    settings,
+)
 from alir.importer import ImporterError
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
@@ -309,20 +321,24 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
         "import_targets": importer.list_targets(conn),
         "push_branches": settings.push_branches(conn),
         "workdirs": registry.list_workdirs(conn),
+        "pushover_status": notify.pushover_source(conn),
     }
 
 
 async def _settings_result(
-    request: Request, dbdir: Path, error: str | None, *, saved: bool = False
+    request: Request, dbdir: Path, error: str | None, *, saved: bool = False, notice: str | None = None
 ) -> Response:
     """settings への POST の結果を返す。htmx ならフォーム断片、通常はリダイレクト。"""
     if _is_htmx(request):
         context = await db.run_in_thread(lambda: _settings_context(dbdir))
         context["saved"] = saved and error is None
         context["error"] = error
+        context["notice"] = notice if error is None else None
         return _render(request, "_settings_form.html", context, fragment="_settings_form.html")
     if error:
         return RedirectResponse(f"/settings?error={quote(error)}", 303)
+    if notice:
+        return RedirectResponse(f"/settings?notice={quote(notice)}", 303)
     return RedirectResponse("/settings", 303)
 
 
@@ -332,6 +348,7 @@ async def settings_index(request: Request) -> Response:
     context = await db.run_in_thread(lambda: _settings_context(dbdir))
     context["saved"] = False
     context["error"] = request.query_params.get("error")
+    context["notice"] = request.query_params.get("notice")
     return _render(request, "settings.html", context, fragment="_settings_form.html")
 
 
@@ -414,6 +431,50 @@ async def settings_push_branches_unset(request: Request) -> Response:
     except SettingsError as exc:
         error = str(exc)
     return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/pushover/set")
+async def settings_pushover_set(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    token = str(form.get("token") or "").strip()
+    user = str(form.get("user") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: settings.set_pushover(db.connect(dbdir), token=token, user=user)
+        )
+    except SettingsError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/pushover/clear")
+async def settings_pushover_clear(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    await db.run_in_thread(lambda: settings.clear_pushover(db.connect(dbdir)))
+    return await _settings_result(request, dbdir, None)
+
+
+@router.post("/settings/pushover/test")
+async def settings_pushover_test(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    error: str | None = None
+    notice: str | None = None
+    try:
+        sent = await db.run_in_thread(
+            lambda: notify.send_pushover(
+                "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
+            )
+        )
+        if sent:
+            notice = "テスト通知を送信しました。"
+        else:
+            error = "Pushover が未設定のため送信できません。"
+    except Exception as exc:  # noqa: BLE001
+        error = f"送信に失敗しました: {exc}"
+    return await _settings_result(request, dbdir, error, notice=notice)
 
 
 async def _loop_context(dbdir: Path) -> dict[str, Any]:
