@@ -54,6 +54,18 @@ def test_add_treats_blank_note_as_none(conn) -> None:  # type: ignore[no-untyped
     assert issue.note is None
 
 
+def test_find_latest_by_ref_returns_newest_entry(conn) -> None:  # type: ignore[no-untyped-def]
+    first = registry.add(conn, url=URL, workdir="/tmp/old")
+    registry.set_status(conn, first.id, registry.STATUS_DONE)
+    registry.add(conn, url=URL, workdir="/tmp/new")
+
+    found = registry.find_latest_by_ref(conn, "denzow/alir#12")
+    assert found is not None
+    assert found.workdir == "/tmp/new"
+    assert registry.find_latest_by_ref(conn, "denzow/alir#99") is None
+    assert registry.find_latest_by_ref(conn, "broken-ref") is None
+
+
 def test_add_rejects_non_issue_url(conn) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(RegistryError):
         registry.add(conn, url="https://github.com/denzow/alir/pull/12", workdir="/tmp")

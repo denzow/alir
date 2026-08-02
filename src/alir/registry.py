@@ -35,7 +35,7 @@ _ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 
 _COLUMNS = (
     "id, url, repo, number, workdir, priority, status, session_id, branch, "
-    "created_at, updated_at, title, mode, note"
+    "created_at, updated_at, title, mode, note, origin"
 )
 
 
@@ -59,6 +59,8 @@ class Issue:
     title: str | None = None
     mode: str = MODE_AUTO
     note: str | None = None
+    # セッションが登録した場合の出所(元 Issue の owner/repo#number)。人間の登録は None。
+    origin: str | None = None
 
     @property
     def ref(self) -> str:
@@ -86,6 +88,7 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         title,
         mode,
         note,
+        origin,
     ) = row
     return Issue(
         id=int(str(iid)),
@@ -102,6 +105,7 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         title=None if title is None else str(title),
         mode=MODE_AUTO if mode is None else str(mode),
         note=None if note is None else str(note),
+        origin=None if origin is None else str(origin),
     )
 
 
@@ -135,11 +139,13 @@ def add(
     title: str | None = None,
     mode: str = MODE_AUTO,
     note: str | None = None,
+    origin: str | None = None,
 ) -> Issue:
     """Issue を queued として登録する。同じ URL の未完了 Issue があれば拒否する。
 
     mode はセッションに求める作業種別(auto / implement / refine)。
     note は登録者の補足コメントで、セッションのプロンプトに含める。
+    origin はセッションが登録した場合の元 Issue(owner/repo#number)。
     """
     repo, number = parse_issue_url(url)
     if mode not in MODES:
@@ -162,7 +168,7 @@ def add(
         iid = int(str(row[0])) + 1
         now = _now()
         conn.execute(
-            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 iid,
                 url,
@@ -178,6 +184,7 @@ def add(
                 title,
                 mode,
                 note,
+                origin,
             ),
         )
     return get(conn, iid)
@@ -190,6 +197,19 @@ def get(conn: iceql.Connection, iid: int) -> Issue:
     if row is None:
         raise RegistryError(f"issue {iid} not found")
     return _row_to_issue(row)
+
+
+def find_latest_by_ref(conn: iceql.Connection, ref: str) -> Issue | None:
+    """ref(owner/repo#number)に一致する最新の登録を返す。なければ None。"""
+    repo, _, number = ref.rpartition("#")
+    if not repo or not number.isdigit():
+        return None
+    cur = conn.execute(
+        f"SELECT {_COLUMNS} FROM issues WHERE repo = ? AND number = ? ORDER BY id DESC LIMIT 1",
+        (repo, int(number)),
+    )
+    row = cur.fetchone()
+    return None if row is None else _row_to_issue(row)
 
 
 def list_issues(conn: iceql.Connection, *, status: str | None = None) -> list[Issue]:

@@ -43,6 +43,73 @@ def test_ask_human_tool_rejects_invalid_input(conn) -> None:  # type: ignore[no-
         mcp_server.ask_human_tool(conn, **params)
 
 
+def test_enqueue_issue_tool_queues_with_inherited_workdir(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import control, registry
+
+    monkeypatch.setattr(registry, "fetch_title", lambda url: "後続のタイトル")
+    registry.add(conn, url="https://github.com/denzow/alir/issues/1", workdir="/tmp/repo")
+
+    result = mcp_server.enqueue_issue_tool(
+        conn,
+        url="https://github.com/denzow/alir/issues/2",
+        source_issue="denzow/alir#1",
+        mode=registry.MODE_REFINE,
+        note="仕様から詰める",
+    )
+    assert result["message"] == "Queued."
+    issue = registry.get(conn, result["issue_id"])
+    assert issue.status == registry.STATUS_QUEUED
+    assert issue.workdir == "/tmp/repo"
+    assert issue.mode == registry.MODE_REFINE
+    assert issue.note == "仕様から詰める"
+    assert issue.origin == "denzow/alir#1"
+    assert issue.title == "後続のタイトル"
+    assert any("enqueued" in e.message for e in control.recent_events(conn))
+
+
+def test_enqueue_issue_tool_prefers_given_title(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import registry
+
+    def no_gh(url):  # type: ignore[no-untyped-def]
+        raise AssertionError("must not call gh when title is given")
+
+    monkeypatch.setattr(registry, "fetch_title", no_gh)
+    registry.add(conn, url="https://github.com/denzow/alir/issues/1", workdir="/tmp/repo")
+
+    result = mcp_server.enqueue_issue_tool(
+        conn,
+        url="https://github.com/denzow/alir/issues/2",
+        source_issue="denzow/alir#1",
+        title="渡されたタイトル",
+    )
+    assert registry.get(conn, result["issue_id"]).title == "渡されたタイトル"
+
+
+def test_enqueue_issue_tool_rejects_unknown_source(conn) -> None:  # type: ignore[no-untyped-def]
+    from alir import registry
+
+    with pytest.raises(registry.RegistryError):
+        mcp_server.enqueue_issue_tool(
+            conn,
+            url="https://github.com/denzow/alir/issues/2",
+            source_issue="denzow/alir#99",
+        )
+
+
+def test_enqueue_issue_tool_rejects_duplicate(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from alir import registry
+
+    monkeypatch.setattr(registry, "fetch_title", lambda url: None)
+    registry.add(conn, url="https://github.com/denzow/alir/issues/1", workdir="/tmp/repo")
+
+    with pytest.raises(registry.RegistryError):
+        mcp_server.enqueue_issue_tool(
+            conn,
+            url="https://github.com/denzow/alir/issues/1",
+            source_issue="denzow/alir#1",
+        )
+
+
 def test_notify_question_swallows_channel_errors(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     q = questions.ask(conn, **_params())
 

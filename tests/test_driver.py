@@ -433,6 +433,15 @@ def test_refine_mode_completes_on_refined_report(dbdir: Path) -> None:
     assert finished.status == registry.STATUS_DONE
 
 
+def test_prompt_instructs_enqueue_issue(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "enqueue_issue" in prompt
+    assert "このセッションでは着手しない" in prompt
+
+
 def test_prompt_warns_against_background_wait(dbdir: Path) -> None:
     """バックグラウンド完了待ちで応答を終えるとセッションごと死ぬことを明記する。"""
     issue = _add_issue(dbdir)

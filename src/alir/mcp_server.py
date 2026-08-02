@@ -15,7 +15,7 @@ from typing import Any
 
 import iceql
 
-from alir import control, db, notify, progress, questions, reports, usage
+from alir import control, db, notify, progress, questions, registry, reports, usage
 
 # 使用率チェックのキャッシュ。progress のたびに CLI を起動しないための TTL
 USAGE_CHECK_TTL = 180.0
@@ -126,6 +126,38 @@ def report_result_tool(
     return {"report_id": report.id, "message": "Recorded."}
 
 
+def enqueue_issue_tool(
+    conn: iceql.Connection,
+    *,
+    url: str,
+    source_issue: str,
+    mode: str = registry.MODE_AUTO,
+    note: str | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """後続 Issue をキュー末尾に登録し、登録結果を返す。
+
+    workdir は source_issue の最新の登録から引き継ぐ。
+    title が渡されなければ gh で取得を試みる(失敗しても登録は続ける)。
+    """
+    source = registry.find_latest_by_ref(conn, source_issue)
+    if source is None:
+        raise registry.RegistryError(f"source issue not registered: {source_issue}")
+    if title is None:
+        title = registry.fetch_title(url)
+    issue = registry.add(
+        conn,
+        url=url,
+        workdir=source.workdir,
+        title=title,
+        mode=mode,
+        note=note,
+        origin=source_issue,
+    )
+    control.log_event(conn, f"session enqueued #{issue.id} {issue.ref} (from {source_issue})")
+    return {"issue_id": issue.id, "message": "Queued."}
+
+
 def create_server(dbdir: str | Path) -> Any:
     try:
         from mcp.server import MCPServer as _ServerClass
@@ -225,6 +257,40 @@ def create_server(dbdir: str | Path) -> Any:
             pr_url=pr_url,
             session_id=session_id,
             outcome=outcome,
+        )
+
+    @server.tool()
+    def enqueue_issue(
+        url: str,
+        source_issue: str,
+        mode: str = "auto",
+        note: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue a follow-up GitHub issue for a later alir session.
+
+        Use this for work that belongs outside the current issue: a fix worth
+        splitting out, or a separate problem you noticed while working. Create
+        the issue on GitHub first (e.g. `gh issue create`), then register its
+        URL here. The entry is appended to the tail of the queue and inherits
+        the working directory from source_issue.
+
+        Args:
+            url: Full GitHub issue URL to register.
+            source_issue: The issue you are working on, as "owner/repo#number".
+            mode: Work requested from the future session: "auto" (the session
+                decides), "implement" (implement without refinement) or
+                "refine" (refine only, no implementation).
+            note: Supplementary comment included in the future session's prompt.
+            title: Issue title, if you know it (skips a gh lookup).
+        """
+        return enqueue_issue_tool(
+            conn,
+            url=url,
+            source_issue=source_issue,
+            mode=mode,
+            note=note,
+            title=title,
         )
 
     return server

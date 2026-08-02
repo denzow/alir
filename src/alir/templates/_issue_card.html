@@ -10,6 +10,7 @@
   <p class="issue-title">{{ issue.title or issue.ref }}</p>
   <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
   <p class="workdir">{{ issue.workdir }}</p>
+  {% if issue.origin %}<p class="issue-note">{{ issue.origin }} のセッションが登録</p>{% endif %}
   {% if issue.note %}<p class="issue-note">{{ issue.note }}</p>{% endif %}
   {% set report = reports.get(issue.id) if reports else none %}
   {% if report %}

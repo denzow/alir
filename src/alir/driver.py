@@ -221,6 +221,11 @@ def build_prompt(
         "質問は不可逆または高影響の判断に限る。低影響の判断は推奨案で進めて PR に記載する。",
         "質問を登録したら回答を待たず、そこまでの実施内容を report_result で報告して"
         "即座に終了する。",
+        "",
+        "この Issue の範囲外の後続作業(切り出すべき修正、作業中に見つけた別の問題など)は、",
+        "このセッションでは着手しない。後続セッションに任せる価値があるものだけ、",
+        "`gh issue create` で Issue を作成したうえで enqueue_issue MCP ツールで登録する。",
+        f'source_issue パラメータには "{issue.ref}" を渡す。',
     ]
     if (
         branch_template is not None
@@ -286,7 +291,8 @@ def run_claude(
         "--mcp-config",
         str(write_mcp_config(dbdir, mcp_url=mcp_url)),
         "--allowedTools",
-        "mcp__alir__ask_human,mcp__alir__report_result,mcp__alir__report_progress",
+        "mcp__alir__ask_human,mcp__alir__report_result,mcp__alir__report_progress,"
+        "mcp__alir__enqueue_issue",
     ]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
