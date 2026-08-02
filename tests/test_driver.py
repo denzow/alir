@@ -701,6 +701,170 @@ def test_report_clears_missing_report_marker(dbdir: Path) -> None:
     )
 
 
+def test_run_claude_passes_resume_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"session_id": "sess-9"}', stderr="")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    dbdir = tmp_path / "data"
+    dbdir.mkdir()
+    result = driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir, resume_session_id="sess-9")
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--resume") + 1] == "sess-9"
+    assert result.session_id == "sess-9"
+
+
+def test_run_claude_omits_resume_flag_without_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    dbdir = tmp_path / "data"
+    dbdir.mkdir()
+    driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir)
+    assert "--resume" not in captured["cmd"]
+
+
+def test_process_issue_resumes_with_marked_session(dbdir: Path) -> None:
+    """再開の印があれば --resume 用のセッション ID が runner に渡り、印は消費される。"""
+    from alir import control, reports
+
+    issue = _add_issue(dbdir)
+    control.mark_resume_session(db.connect(dbdir), issue.ref, "sess-park")
+
+    calls: list[str | None] = []
+
+    def runner(
+        *,
+        prompt: str,
+        cwd: Path,
+        dbdir: Path,
+        skip_permissions: bool = False,
+        resume_session_id: str | None = None,
+    ) -> RunResult:
+        calls.append(resume_session_id)
+        conn = db.connect(dbdir)
+        reports.add(conn, issue="denzow/alir#12", summary="実施内容", outcome="implemented")
+        return RunResult(exit_code=0, session_id="sess-park", output="ok")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert calls == ["sess-park"]
+    assert finished.status == registry.STATUS_DONE
+    assert control.resume_session(db.connect(dbdir), issue.ref) is None
+
+
+def test_process_issue_resume_failure_falls_back_to_new_session(dbdir: Path) -> None:
+    """resume が失敗しても新規セッションでやり直し、Issue は failed にならない。"""
+    from alir import control, reports
+
+    issue = _add_issue(dbdir)
+    control.mark_resume_session(db.connect(dbdir), issue.ref, "sess-park")
+
+    calls: list[str | None] = []
+
+    def runner(
+        *,
+        prompt: str,
+        cwd: Path,
+        dbdir: Path,
+        skip_permissions: bool = False,
+        resume_session_id: str | None = None,
+    ) -> RunResult:
+        calls.append(resume_session_id)
+        if resume_session_id is not None:
+            return RunResult(exit_code=1, session_id=None, output="No conversation found")
+        conn = db.connect(dbdir)
+        reports.add(conn, issue="denzow/alir#12", summary="実施内容", outcome="implemented")
+        return RunResult(exit_code=0, session_id="sess-new", output="ok")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert calls == ["sess-park", None]
+    assert finished.status == registry.STATUS_DONE
+    assert finished.session_id == "sess-new"
+
+
+def test_process_issue_resume_disabled_by_setting(dbdir: Path) -> None:
+    """settings で無効化すると印があっても常に新規セッションで再開する。"""
+    from alir import control, settings
+
+    issue = _add_issue(dbdir)
+    conn = db.connect(dbdir)
+    settings.set_resume_enabled(conn, False)
+    control.mark_resume_session(conn, issue.ref, "sess-park")
+
+    calls: list[str | None] = []
+
+    def runner(
+        *,
+        prompt: str,
+        cwd: Path,
+        dbdir: Path,
+        skip_permissions: bool = False,
+        resume_session_id: str | None = None,
+    ) -> RunResult:
+        calls.append(resume_session_id)
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert calls == [None]
+    # 古い印を持ち越さないよう、無効化中でも実行の完了で消費する
+    assert control.resume_session(db.connect(dbdir), issue.ref) is None
+
+
+def test_process_issue_rate_limited_keeps_resume_marker(dbdir: Path) -> None:
+    """rate limit での requeue は印を残し、明けの再試行でも --resume を使う。"""
+    from alir import control
+
+    issue = _add_issue(dbdir)
+    control.mark_resume_session(db.connect(dbdir), issue.ref, "sess-park")
+
+    def runner(
+        *,
+        prompt: str,
+        cwd: Path,
+        dbdir: Path,
+        skip_permissions: bool = False,
+        resume_session_id: str | None = None,
+    ) -> RunResult:
+        return RunResult(
+            exit_code=1, session_id=None, output="usage limit reached", rate_limited=True
+        )
+
+    with pytest.raises(driver.RateLimited):
+        driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert control.resume_session(db.connect(dbdir), issue.ref) == "sess-park"
+
+
+def test_refined_requeue_does_not_mark_resume(dbdir: Path) -> None:
+    """refined 経由の再キューには印が付かず、実装フェーズは新規セッションで始まる。"""
+    from alir import control, reports
+
+    issue = _add_issue(dbdir)
+
+    def refiner(
+        *, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False
+    ) -> RunResult:
+        conn = db.connect(dbdir)
+        reports.add(conn, issue="denzow/alir#12", summary="仕様を整理", outcome="refined")
+        return RunResult(exit_code=0, session_id="sess-1", output="refined")
+
+    requeued = driver.process_issue(dbdir, issue.id, runner=refiner, worktree=_fake_worktree)
+    assert requeued.status == registry.STATUS_QUEUED
+    assert control.resume_session(db.connect(dbdir), issue.ref) is None
+
+
 PR_URL = "https://github.com/denzow/alir/pull/34"
 
 

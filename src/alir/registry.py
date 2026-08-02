@@ -35,7 +35,7 @@ _ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 
 _COLUMNS = (
     "id, url, repo, number, workdir, priority, status, session_id, branch, "
-    "created_at, updated_at, title, mode, note, origin"
+    "created_at, updated_at, title, mode, note, origin, retries"
 )
 
 
@@ -61,6 +61,8 @@ class Issue:
     note: str | None = None
     # セッションが登録した場合の出所(元 Issue の owner/repo#number)。人間の登録は None。
     origin: str | None = None
+    # failed からの自動リトライ回数。done で 0 に戻る。
+    retries: int = 0
 
     @property
     def ref(self) -> str:
@@ -89,6 +91,7 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         mode,
         note,
         origin,
+        retries,
     ) = row
     return Issue(
         id=int(str(iid)),
@@ -106,6 +109,7 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         mode=MODE_AUTO if mode is None else str(mode),
         note=None if note is None else str(note),
         origin=None if origin is None else str(origin),
+        retries=0 if retries is None else int(str(retries)),
     )
 
 
@@ -168,7 +172,8 @@ def add(
         iid = int(str(row[0])) + 1
         now = _now()
         conn.execute(
-            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO issues ({_COLUMNS}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 iid,
                 url,
@@ -185,6 +190,7 @@ def add(
                 mode,
                 note,
                 origin,
+                0,
             ),
         )
     return get(conn, iid)
@@ -270,18 +276,26 @@ def set_status(
     *,
     session_id: str | None = None,
     branch: str | None = None,
+    retries: int | None = None,
 ) -> Issue:
-    """Issue の状態を更新する。session_id と branch は指定されたときだけ上書きする。"""
+    """Issue の状態を更新する。session_id / branch / retries は指定されたときだけ上書きする。
+
+    done への遷移はリトライ回数を 0 に戻す(成功したらリトライ状態を引き継がない)。
+    """
     if status not in STATUSES:
         raise RegistryError(f"status must be one of {STATUSES}")
+    if retries is None and status == STATUS_DONE:
+        retries = 0
     with db.transaction(conn):
         issue = get(conn, iid)
         conn.execute(
-            "UPDATE issues SET status = ?, session_id = ?, branch = ?, updated_at = ? WHERE id = ?",
+            "UPDATE issues SET status = ?, session_id = ?, branch = ?, retries = ?, "
+            "updated_at = ? WHERE id = ?",
             (
                 status,
                 session_id if session_id is not None else issue.session_id,
                 branch if branch is not None else issue.branch,
+                retries if retries is not None else issue.retries,
                 _now(),
                 iid,
             ),

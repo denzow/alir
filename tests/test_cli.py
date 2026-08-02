@@ -143,3 +143,21 @@ def test_push_branch_unset_unknown_fails(dbdir: Path, tmp_path: Path) -> None:
     result = CliRunner().invoke(main, ["push-branch", "unset", "--workdir", str(tmp_path)])
     assert result.exit_code != 0
     assert "not set" in result.output
+
+
+def test_resume_show_enable_disable(dbdir: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["resume"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "enabled"
+
+    result = runner.invoke(main, ["resume", "disable"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["resume"])
+    assert result.output.strip() == "disabled"
+
+    result = runner.invoke(main, ["resume", "enable"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["resume"])
+    assert result.output.strip() == "enabled"

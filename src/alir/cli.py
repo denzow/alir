@@ -240,6 +240,50 @@ def push_branch_unset(workdir: Path) -> None:
     click.echo(f"unset: {workdir.resolve()}")
 
 
+@main.group("retry-limit", invoke_without_command=True)
+@click.pass_context
+def retry_limit_group(ctx: click.Context) -> None:
+    """failed の自動リトライ回数の上限を操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        click.echo(settings.retry_limit(conn))
+
+
+@retry_limit_group.command("set")
+@click.argument("limit", type=int)
+def retry_limit_set(limit: int) -> None:
+    """自動リトライ回数の上限を設定する。0 で自動リトライを無効にする。"""
+    conn = db.connect(data_dir())
+    try:
+        settings.set_retry_limit(conn, limit)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {limit}")
+
+
+@main.group("resume", invoke_without_command=True)
+@click.pass_context
+def resume_group(ctx: click.Context) -> None:
+    """park からの再開での --resume 利用を操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        click.echo("enabled" if settings.resume_enabled(conn) else "disabled")
+
+
+@resume_group.command("enable")
+def resume_enable() -> None:
+    """park からの再開で --resume を使う(既定)。"""
+    settings.set_resume_enabled(db.connect(data_dir()), True)
+    click.echo("enabled")
+
+
+@resume_group.command("disable")
+def resume_disable() -> None:
+    """--resume を使わず、常に新規セッションで再開する(挙動の切り分け用)。"""
+    settings.set_resume_enabled(db.connect(data_dir()), False)
+    click.echo("disabled")
+
+
 def _run_options(f: Callable[..., None]) -> Callable[..., None]:
     """run と serve で共通のループドライバ用オプション。"""
     options = [

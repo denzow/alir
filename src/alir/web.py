@@ -18,7 +18,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, importer, progress, questions, registry, reports, settings
+from alir import control, db, importer, progress, questions, registry, reports, retry, settings
 from alir.importer import ImporterError
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
@@ -233,7 +233,9 @@ async def issues_requeue(request: Request, iid: int) -> Response:
             issue = registry.get(conn, iid)
             if issue.status != registry.STATUS_FAILED:
                 raise RegistryError(f"issue {iid} is {issue.status}, not failed")
-            registry.set_status(conn, iid, registry.STATUS_QUEUED)
+            # 人間の再キューはリトライ状態を初期化し、自動リトライを再び使えるようにする
+            registry.set_status(conn, iid, registry.STATUS_QUEUED, retries=0)
+            retry.clear_notified(conn, issue.ref)
 
     error: str | None = None
     try:

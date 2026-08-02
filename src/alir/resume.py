@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import iceql
 
-from alir import questions, registry
+from alir import control, questions, registry
 from alir.questions import Question
 from alir.registry import Issue
 
@@ -42,6 +42,8 @@ def requeue_answered(conn: iceql.Connection) -> list[Issue]:
 
     「揃った」とは、その Issue の質問に open が残っておらず、
     回答(人間の回答または期限切れの推奨案)が 1 件以上あることを指す。
+    park 時のセッション ID があれば再開用に記録し、
+    ドライバが `claude -p --resume` で文脈ごと再開できるようにする。
     """
     all_questions = questions.list_questions(conn, status=None)
     requeued = []
@@ -50,5 +52,7 @@ def requeue_answered(conn: iceql.Connection) -> list[Issue]:
         has_open = any(q.status == questions.STATUS_OPEN for q in related)
         has_answer = any(q.answer is not None for q in related)
         if not has_open and has_answer:
+            if issue.session_id is not None:
+                control.mark_resume_session(conn, issue.ref, issue.session_id)
             requeued.append(registry.set_status(conn, issue.id, registry.STATUS_QUEUED))
     return requeued

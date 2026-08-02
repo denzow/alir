@@ -85,6 +85,25 @@ def stop_instructed_at(conn: iceql.Connection, issue_ref: str) -> str | None:
     return get_value(conn, f"stop_instructed:{issue_ref}")
 
 
+def mark_resume_session(conn: iceql.Connection, issue_ref: str, session_id: str) -> None:
+    """park からの再開で `claude -p --resume` に使うセッション ID を記録する。
+
+    回答検知(resume.requeue_answered)が queued に戻すときに付ける印で、
+    refined 経由の再キューには付かない。ドライバは実行の完了時に消費する。
+    """
+    set_value(conn, f"resume_session:{issue_ref}", session_id)
+
+
+def resume_session(conn: iceql.Connection, issue_ref: str) -> str | None:
+    """記録済みの再開用セッション ID。なければ None。"""
+    return get_value(conn, f"resume_session:{issue_ref}") or None
+
+
+def clear_resume_session(conn: iceql.Connection, issue_ref: str) -> None:
+    """再開用セッション ID を消す。セッションの実行が完了したら呼ぶ。"""
+    clear_value(conn, f"resume_session:{issue_ref}")
+
+
 def mark_missing_report_requeued(conn: iceql.Connection, issue_ref: str) -> None:
     """報告なしで終了したセッションを queued に戻したことを記録する。
 

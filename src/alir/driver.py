@@ -22,7 +22,19 @@ from typing import Any
 
 import iceql
 
-from alir import ci, control, db, importer, questions, registry, reports, resume, settings, usage
+from alir import (
+    ci,
+    control,
+    db,
+    importer,
+    questions,
+    registry,
+    reports,
+    resume,
+    retry,
+    settings,
+    usage,
+)
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -359,8 +371,12 @@ def run_claude(
     dbdir: Path,
     skip_permissions: bool = False,
     mcp_url: str | None = None,
+    resume_session_id: str | None = None,
 ) -> RunResult:
-    """claude -p を 1 回実行し、結果 JSON から session_id と成否を取り出す。"""
+    """claude -p を 1 回実行し、結果 JSON から session_id と成否を取り出す。
+
+    resume_session_id があれば --resume を付け、park 時のセッションを文脈ごと再開する。
+    """
     cmd = [
         "claude",
         "-p",
@@ -373,6 +389,8 @@ def run_claude(
         "mcp__alir__ask_human,mcp__alir__report_result,mcp__alir__report_progress,"
         "mcp__alir__enqueue_issue",
     ]
+    if resume_session_id is not None:
+        cmd += ["--resume", resume_session_id]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
     env = dict(os.environ, ALIR_DATA_DIR=str(dbdir))
@@ -413,6 +431,10 @@ def process_issue(
     再開時は前回のブランチをそのまま使う。workdir が直接 push 運用
     (settings.push_branch)なら再開時も含め常に現在の push 先ブランチを使い、
     PR を作らない手順のプロンプトにする。
+    park からの再開(回答検知が resume_session を記録済み)は、settings で
+    無効化されていなければ --resume で前回セッションを文脈ごと再開する。
+    resume が失敗した場合(セッションの期限切れなど)は新規セッションに
+    フォールバックする。記録は rate limit 以外の完了で消費する。
     セッションがリファインメントだけで終えた(outcome="refined"の報告)場合は
     queued に戻し、次のセッションが実装する。ただし mode=refine の Issue は
     リファインメントが最終成果なので done にする。
@@ -439,6 +461,7 @@ def process_issue(
     else:
         branch = issue.branch or settings.render_branch(template, issue)
     ci_failed_pr = ci.take_ci_failure(conn, issue.ref)
+    resume_sid = control.resume_session(conn, issue.ref) if settings.resume_enabled(conn) else None
     try:
         path = worktree(issue, branch, push=push_branch is not None)
         prompt = build_prompt(
@@ -450,7 +473,26 @@ def process_issue(
             ci_failed_pr=ci_failed_pr,
             direct_push=push_branch is not None,
         )
-        result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
+        if resume_sid is not None:
+            result = runner(
+                prompt=prompt,
+                cwd=path,
+                dbdir=dbdir,
+                skip_permissions=skip_permissions,
+                resume_session_id=resume_sid,
+            )
+            if result.exit_code != 0 and not result.rate_limited:
+                # セッションの期限切れなどで resume できなかったとみなし、
+                # 新規セッションでやり直す(回答はプロンプトに含まれている)
+                control.log_event(
+                    db.connect(dbdir),
+                    f"issue #{iid} の resume に失敗したため新規セッションで再実行する",
+                )
+                result = runner(
+                    prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions
+                )
+        else:
+            result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
         registry.set_status(db.connect(dbdir), iid, registry.STATUS_FAILED)
         raise
@@ -468,10 +510,13 @@ def process_issue(
             conn, issue_ref=issue.ref, session_id=result.session_id, usage=result.usage
         )
     if result.rate_limited:
+        # 再開の印は残し、rate limit 明けの再試行でも --resume を使えるようにする
         registry.set_status(
             conn, iid, registry.STATUS_QUEUED, session_id=result.session_id, branch=branch
         )
         raise RateLimited(f"issue #{iid} hit a rate limit; requeued")
+    # 再開の印は 1 回の実行(フォールバック含む)で消費する
+    control.clear_resume_session(conn, issue.ref)
 
     has_open_question = any(
         q.issue == issue.ref for q in questions.list_questions(conn, status=questions.STATUS_OPEN)
@@ -556,7 +601,9 @@ def run_loop(
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
     各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
-    Issue を queued に戻す。手動の一時停止フラグ、公式レート制限使用率の
+    Issue を queued に戻す。failed の Issue は上限(settings.retry_limit)まで
+    バックオフ付きで自動的に queued に戻し、上限に達したら通知する。
+    手動の一時停止フラグ、公式レート制限使用率の
     閾値超過、トークン予算の閾値超過、レート制限時のバックオフ中は
     新規 Issue を開始しない(実行中のものは完了まで走らせる)。
 
@@ -613,6 +660,16 @@ def run_loop(
                 emit(f"question #{q.id} expired: proceeding with recommended")
             for requeued in resume.requeue_answered(conn):
                 emit(f"requeue #{requeued.id} {requeued.ref}")
+
+            retry_limit = settings.retry_limit(conn)
+            retried = retry.process_failed(conn, limit=retry_limit)
+            for requeued in retried.requeued:
+                emit(
+                    f"retry #{requeued.id} {requeued.ref}: failed -> queued "
+                    f"({requeued.retries}/{retry_limit})"
+                )
+            for stopped in retried.exhausted:
+                emit(f"retry limit reached #{stopped.id} {stopped.ref}: kept failed, notified")
 
             if time.monotonic() >= next_import:
                 next_import = time.monotonic() + import_interval

@@ -650,3 +650,22 @@ def test_history_reports_scoped_to_each_registration(
     res = client.get("/history")
     # 1 回目の報告は 1 回目のカードにだけ表示される
     assert res.text.count("1回目の実行報告") == 1
+
+
+def test_issues_requeue_resets_retry_state(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry, retry
+    from alir.control import get_value
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url="https://github.com/denzow/alir/issues/9", workdir=str(tmp_path))
+    registry.set_status(conn, issue.id, registry.STATUS_FAILED, retries=2)
+    retry.process_failed(conn, limit=2, notifier=lambda i, n: None)  # 通知済みの印を付ける
+
+    res = client.post(f"/issues/{issue.id}/requeue", follow_redirects=True)
+    assert res.status_code == 200
+
+    conn = db.connect(dbdir)
+    requeued = registry.get(conn, issue.id)
+    assert requeued.status == registry.STATUS_QUEUED
+    assert requeued.retries == 0
+    assert get_value(conn, f"retry_exhausted_notified:{requeued.ref}") is None
