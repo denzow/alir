@@ -292,6 +292,66 @@ def model_clear() -> None:
     click.echo("cleared")
 
 
+@main.group("pushover", invoke_without_command=True)
+@click.pass_context
+def pushover_group(ctx: click.Context) -> None:
+    """Pushover 通知の連携を操作する。サブコマンドなしなら設定状態を表示する。"""
+    if ctx.invoked_subcommand is None:
+        import os
+
+        from alir import notify
+
+        conn = db.connect(data_dir())
+        if settings.pushover(conn) is not None:
+            click.echo("configured (settings)")
+        elif os.environ.get(notify.ENV_PUSHOVER_TOKEN) and os.environ.get(
+            notify.ENV_PUSHOVER_USER
+        ):
+            click.echo("configured (environment)")
+        else:
+            click.echo("not set")
+
+
+@pushover_group.command("set")
+@click.option("--token", required=True, help="Pushover の API トークン")
+@click.option("--user", required=True, help="Pushover のユーザーキー")
+def pushover_set(token: str, user: str) -> None:
+    """Pushover の認証情報を設定する。次の通知から使われる。"""
+    conn = db.connect(data_dir())
+    try:
+        settings.set_pushover(conn, token=token, user=user)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("set")
+
+
+@pushover_group.command("clear")
+def pushover_clear() -> None:
+    """Pushover の認証情報を消す(環境変数があればそちらに戻る)。"""
+    settings.clear_pushover(db.connect(data_dir()))
+    click.echo("cleared")
+
+
+@pushover_group.command("test")
+def pushover_test() -> None:
+    """テスト通知を送り、連携設定を確認する。"""
+    import os
+
+    from alir import notify
+
+    try:
+        sent = notify.send_pushover(
+            "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(f"failed to send: {exc}") from exc
+    if not sent:
+        raise click.ClickException(
+            "not configured: alir pushover set --token ... --user ... で設定する"
+        )
+    click.echo("sent")
+
+
 @main.group("resume", invoke_without_command=True)
 @click.pass_context
 def resume_group(ctx: click.Context) -> None:

@@ -88,6 +88,23 @@ def test_set_empty_model_rejected(conn) -> None:  # type: ignore[no-untyped-def]
         settings.set_model(conn, "  ")
 
 
+def test_pushover_default_none(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.pushover(conn) is None
+
+
+def test_set_and_clear_pushover(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_pushover(conn, token=" app-token ", user=" user-key ")
+    assert settings.pushover(conn) == ("app-token", "user-key")
+    settings.clear_pushover(conn)
+    assert settings.pushover(conn) is None
+
+
+@pytest.mark.parametrize("token,user", [("", "u"), ("t", ""), ("  ", "  ")])
+def test_set_pushover_requires_both(conn, token, user) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_pushover(conn, token=token, user=user)
+
+
 def test_push_branches_default_empty(conn) -> None:  # type: ignore[no-untyped-def]
     assert settings.push_branches(conn) == {}
     assert settings.push_branch(conn, "/tmp/none") is None

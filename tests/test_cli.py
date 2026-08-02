@@ -184,3 +184,60 @@ def test_model_show_set_clear(dbdir: Path) -> None:
 def test_model_set_empty_fails(dbdir: Path) -> None:
     result = CliRunner().invoke(main, ["model", "set", "  "])
     assert result.exit_code != 0
+
+
+def test_pushover_show_set_clear(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import notify
+
+    monkeypatch.delenv(notify.ENV_PUSHOVER_TOKEN, raising=False)
+    monkeypatch.delenv(notify.ENV_PUSHOVER_USER, raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["pushover"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "not set"
+
+    result = runner.invoke(main, ["pushover", "set", "--token", "t", "--user", "u"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["pushover"])
+    assert result.output.strip() == "configured (settings)"
+
+    result = runner.invoke(main, ["pushover", "clear"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["pushover"])
+    assert result.output.strip() == "not set"
+
+
+def test_pushover_show_reports_environment(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import notify
+
+    monkeypatch.setenv(notify.ENV_PUSHOVER_TOKEN, "t")
+    monkeypatch.setenv(notify.ENV_PUSHOVER_USER, "u")
+    result = CliRunner().invoke(main, ["pushover"])
+    assert result.output.strip() == "configured (environment)"
+
+
+def test_pushover_test_reports_unconfigured(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import notify
+
+    monkeypatch.delenv(notify.ENV_PUSHOVER_TOKEN, raising=False)
+    monkeypatch.delenv(notify.ENV_PUSHOVER_USER, raising=False)
+    result = CliRunner().invoke(main, ["pushover", "test"])
+    assert result.exit_code != 0
+    assert "not configured" in result.output
+
+
+def test_pushover_test_sends(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import notify
+
+    sent: list[str] = []
+
+    def fake_send(message: str, *, url: str | None) -> bool:
+        sent.append(message)
+        return True
+
+    monkeypatch.setattr(notify, "send_pushover", fake_send)
+    result = CliRunner().invoke(main, ["pushover", "test"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "sent"
+    assert sent

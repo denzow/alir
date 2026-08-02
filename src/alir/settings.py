@@ -30,6 +30,10 @@ DEFAULT_RETRY_LIMIT = 2
 # セッション(claude -p)に --model で渡すモデル名。未設定なら claude の既定に従う
 KEY_MODEL = "model"
 
+# Pushover 通知の認証情報(JSON: {"token": ..., "user": ...})。
+# 未設定なら環境変数(ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER)にフォールバックする
+KEY_PUSHOVER = "pushover"
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -123,6 +127,29 @@ def set_model(conn: iceql.Connection, model: str) -> None:
 def clear_model(conn: iceql.Connection) -> None:
     """モデル名の設定を消し、claude の既定に戻す。"""
     control.set_value(conn, KEY_MODEL, "")
+
+
+def pushover(conn: iceql.Connection) -> tuple[str, str] | None:
+    """Pushover の認証情報 (token, user) を返す。未設定なら None。"""
+    raw = control.get_value(conn, KEY_PUSHOVER)
+    if not raw:
+        return None
+    data = json.loads(raw)
+    return data["token"], data["user"]
+
+
+def set_pushover(conn: iceql.Connection, *, token: str, user: str) -> None:
+    """Pushover の認証情報を設定する。次の通知から使われる。"""
+    token = token.strip()
+    user = user.strip()
+    if not token or not user:
+        raise SettingsError("token and user are required")
+    control.set_value(conn, KEY_PUSHOVER, json.dumps({"token": token, "user": user}))
+
+
+def clear_pushover(conn: iceql.Connection) -> None:
+    """Pushover の認証情報を消す(環境変数があればそちらに戻る)。"""
+    control.set_value(conn, KEY_PUSHOVER, "")
 
 
 def retry_limit(conn: iceql.Connection) -> int:
