@@ -113,3 +113,19 @@ def test_set_push_branch_rejects_missing_workdir(conn, tmp_path: Path) -> None: 
 def test_clear_push_branch_unknown_raises(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(SettingsError):
         settings.clear_push_branch(conn, workdir=str(tmp_path))
+
+
+def test_retry_limit_default(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.retry_limit(conn) == 2
+
+
+def test_set_retry_limit_roundtrip(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_retry_limit(conn, 5)
+    assert settings.retry_limit(conn) == 5
+    settings.set_retry_limit(conn, 0)
+    assert settings.retry_limit(conn) == 0
+
+
+def test_set_retry_limit_rejects_negative(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_retry_limit(conn, -1)

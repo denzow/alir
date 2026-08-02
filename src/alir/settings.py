@@ -23,6 +23,10 @@ KEY_PUSH_BRANCHES = "push_branches"
 # park からの再開で claude -p --resume を使うかどうか("0" で無効)
 KEY_RESUME_ENABLED = "resume_enabled"
 
+# failed の Issue を自動で queued に戻す回数の上限
+KEY_RETRY_LIMIT = "retry_limit"
+DEFAULT_RETRY_LIMIT = 2
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -94,6 +98,19 @@ def resume_enabled(conn: iceql.Connection) -> bool:
 def set_resume_enabled(conn: iceql.Connection, enabled: bool) -> None:
     """park からの再開で --resume を使うかどうかを設定する(挙動の切り分け用)。"""
     control.set_value(conn, KEY_RESUME_ENABLED, "1" if enabled else "0")
+
+
+def retry_limit(conn: iceql.Connection) -> int:
+    """failed の自動リトライ回数の上限を返す。未設定なら既定値。"""
+    raw = control.get_value(conn, KEY_RETRY_LIMIT)
+    return DEFAULT_RETRY_LIMIT if raw is None else int(raw)
+
+
+def set_retry_limit(conn: iceql.Connection, limit: int) -> None:
+    """failed の自動リトライ回数の上限を設定する。0 で自動リトライを無効にする。"""
+    if limit < 0:
+        raise SettingsError("retry limit must be 0 or greater")
+    control.set_value(conn, KEY_RETRY_LIMIT, str(limit))
 
 
 def push_branches(conn: iceql.Connection) -> dict[str, str]:

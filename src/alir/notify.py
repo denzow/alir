@@ -1,6 +1,6 @@
-"""通知: 質問の登録を Pushover とデスクトップに知らせる。
+"""通知: 質問の登録やリトライ上限の到達を Pushover とデスクトップに知らせる。
 
-通知は補助機能なので、失敗しても質問の登録は成功させる(best-effort)。
+通知は補助機能なので、失敗しても元の処理は成功させる(best-effort)。
 Pushover は環境変数 ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER があるときだけ送る。
 通知に含める Web UI の URL は ALIR_WEB_URL(例: http://192.168.1.10:8710)で指定する。
 """
@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 
 from alir.questions import Question
+from alir.registry import Issue
 
 ENV_PUSHOVER_TOKEN = "ALIR_PUSHOVER_TOKEN"
 ENV_PUSHOVER_USER = "ALIR_PUSHOVER_USER"
@@ -48,11 +49,22 @@ def send_pushover(message: str, *, url: str | None) -> None:
         pass
 
 
-def notify_question(question: Question) -> None:
-    """質問の登録を各チャネルへ通知する。失敗は握りつぶす。"""
-    message = build_message(question)
+def notify_message(message: str) -> None:
+    """メッセージを各チャネルへ通知する。失敗は握りつぶす。"""
     web_url = os.environ.get(ENV_WEB_URL)
     with contextlib.suppress(Exception):
         send_desktop(message)
     with contextlib.suppress(Exception):
         send_pushover(message, url=web_url)
+
+
+def notify_question(question: Question) -> None:
+    """質問の登録を各チャネルへ通知する。"""
+    notify_message(build_message(question))
+
+
+def notify_retry_exhausted(issue: Issue, limit: int) -> None:
+    """自動リトライの上限到達を各チャネルへ通知する。"""
+    notify_message(
+        f"#{issue.id} {issue.ref}: 自動リトライが上限({limit}回)に達し failed のまま停止"
+    )

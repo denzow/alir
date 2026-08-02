@@ -22,7 +22,19 @@ from typing import Any
 
 import iceql
 
-from alir import ci, control, db, importer, questions, registry, reports, resume, settings, usage
+from alir import (
+    ci,
+    control,
+    db,
+    importer,
+    questions,
+    registry,
+    reports,
+    resume,
+    retry,
+    settings,
+    usage,
+)
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -583,7 +595,9 @@ def run_loop(
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
     各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
-    Issue を queued に戻す。手動の一時停止フラグ、公式レート制限使用率の
+    Issue を queued に戻す。failed の Issue は上限(settings.retry_limit)まで
+    バックオフ付きで自動的に queued に戻し、上限に達したら通知する。
+    手動の一時停止フラグ、公式レート制限使用率の
     閾値超過、トークン予算の閾値超過、レート制限時のバックオフ中は
     新規 Issue を開始しない(実行中のものは完了まで走らせる)。
 
@@ -640,6 +654,16 @@ def run_loop(
                 emit(f"question #{q.id} expired: proceeding with recommended")
             for requeued in resume.requeue_answered(conn):
                 emit(f"requeue #{requeued.id} {requeued.ref}")
+
+            retry_limit = settings.retry_limit(conn)
+            retried = retry.process_failed(conn, limit=retry_limit)
+            for requeued in retried.requeued:
+                emit(
+                    f"retry #{requeued.id} {requeued.ref}: failed -> queued "
+                    f"({requeued.retries}/{retry_limit})"
+                )
+            for stopped in retried.exhausted:
+                emit(f"retry limit reached #{stopped.id} {stopped.ref}: kept failed, notified")
 
             if time.monotonic() >= next_import:
                 next_import = time.monotonic() + import_interval

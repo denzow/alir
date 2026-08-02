@@ -96,7 +96,8 @@ CREATE TABLE issues (
     title TEXT,
     mode TEXT,
     note TEXT,
-    origin TEXT
+    origin TEXT,
+    retries INTEGER
 )
 """,
 }
@@ -109,6 +110,7 @@ def _migrate(conn: iceql.Connection) -> None:
         ("issues", "mode", "ALTER TABLE issues ADD COLUMN mode TEXT"),
         ("issues", "note", "ALTER TABLE issues ADD COLUMN note TEXT"),
         ("issues", "origin", "ALTER TABLE issues ADD COLUMN origin TEXT"),
+        ("issues", "retries", "ALTER TABLE issues ADD COLUMN retries INTEGER"),
         ("reports", "outcome", "ALTER TABLE reports ADD COLUMN outcome TEXT"),
     )
     for table, column, ddl in additions:
