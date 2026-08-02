@@ -462,6 +462,49 @@ def test_process_issue_direct_push_overrides_stored_branch(dbdir: Path, tmp_path
     assert finished.branch == "develop"
 
 
+def test_prompt_direct_push_instructs_issue_close(dbdir: Path, tmp_path: Path) -> None:
+    """直接 push 運用では push 後に対象 Issue をクローズする手順を含める。"""
+    from alir import settings
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    issue = _add_issue(dbdir, workdir=str(work.resolve()))
+    conn = db.connect(dbdir)
+    settings.set_push_branch(conn, workdir=str(work), branch="develop")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert f"gh issue close {URL} --comment" in prompt
+    assert "実施内容と対応コミットを記載する" in prompt
+    assert "push した場合だけ" in prompt
+
+
+def test_prompt_pr_mode_omits_issue_close(dbdir: Path) -> None:
+    """PR 運用のプロンプトにはクローズ手順を含めない(Fixes に任せる)。"""
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "gh issue close" not in prompt
+
+
+def test_prompt_direct_push_refine_mode_omits_issue_close(dbdir: Path, tmp_path: Path) -> None:
+    """直接 push 運用でも、リファインメント手順にはクローズ指示を含めない。"""
+    from alir import settings
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir=str(work.resolve()), mode=registry.MODE_REFINE)
+    settings.set_push_branch(conn, workdir=str(work), branch="develop")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, 1, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "gh issue close" not in prompt
+
+
 def test_prompt_direct_push_omits_rename_instruction(dbdir: Path, tmp_path: Path) -> None:
     """直接 push 運用ではテンプレートに {type} 等があってもブランチを改名させない。"""
     from alir import settings
