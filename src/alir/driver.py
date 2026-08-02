@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from alir import ci, control, db, questions, registry, reports, resume, settings, usage
+from alir import ci, control, db, questions, registry, reports, resume, review, settings, usage
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -135,12 +135,14 @@ def build_prompt(
     past_reports: list[reports.Report] | None = None,
     branch_template: str | None = None,
     ci_failed_pr: str | None = None,
+    review_requested_pr: str | None = None,
 ) -> str:
     """1 Issue を処理するセッションのプロンプトを組み立てる。
 
     branch_template にセッションが決める変数({type} / {summary})が含まれる場合は、
     改名の指示を加える。ci_failed_pr があれば、その PR の CI が失敗している旨と
-    修正の指示を加える。
+    修正の指示を加える。review_requested_pr があれば、その PR にレビュー指摘が
+    付いている旨と対応の指示を加える。
     """
     lines = [
         "あなたは GitHub Issue を自律的に処理するエージェントである。",
@@ -155,6 +157,16 @@ def build_prompt(
             f"対象 PR: {ci_failed_pr}",
             f"`gh pr checks {ci_failed_pr}` などで失敗内容を確認し、修正をコミットして",
             "同じブランチに push することで既存の PR を更新する。新しい PR は作らない。",
+            "",
+        ]
+    if review_requested_pr is not None:
+        lines += [
+            "この Issue で過去のセッションが作成した PR にレビュー指摘が付いている。",
+            f"対象 PR: {review_requested_pr}",
+            f"`gh pr view {review_requested_pr} --comments` でレビューと指摘を確認し、",
+            "対応が必要なものは修正をコミットして同じブランチに push することで",
+            "既存の PR を更新する。新しい PR は作らない。",
+            "対応が不要と判断した指摘は、その理由を PR のコメントで返す。",
             "",
         ]
     lines += [
@@ -314,6 +326,7 @@ def process_issue(
     template = settings.branch_template(conn)
     branch = issue.branch or settings.render_branch(template, issue)
     ci_failed_pr = ci.take_ci_failure(conn, issue.ref)
+    review_requested_pr = review.take_review_request(conn, issue.ref)
     try:
         path = worktree(issue, branch)
         prompt = build_prompt(
@@ -323,6 +336,7 @@ def process_issue(
             past_reports=past_reports,
             branch_template=None if issue.branch else template,
             ci_failed_pr=ci_failed_pr,
+            review_requested_pr=review_requested_pr,
         )
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
@@ -366,6 +380,9 @@ def process_issue(
         status = registry.STATUS_QUEUED
     else:
         status = registry.STATUS_DONE
+    if status == registry.STATUS_DONE:
+        # セッション自身が PR に付けたコメントをレビュー監視が拾わないようにする
+        review.record_session_end(conn, issue.ref)
     return registry.set_status(conn, iid, status, session_id=result.session_id, branch=branch)
 
 
@@ -385,6 +402,8 @@ def run_loop(
     usage_threshold: float | None = None,
     pr_status_fetch: ci.PrStatusFetch | None = None,
     ci_check_ttl: float = 300.0,
+    review_status_fetch: review.ReviewStatusFetch | None = None,
+    review_check_ttl: float = 300.0,
     log: Callable[[str], None] = print,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
@@ -401,7 +420,9 @@ def run_loop(
 
     pr_status_fetch(通常は ci.fetch_pr_status)を渡すと、done の Issue の
     PR を ci_check_ttl 秒間隔で確認し、CI が失敗していれば queued に戻す。
-    マージ済み・クローズ済みの PR は以後の確認から除外する。
+    review_status_fetch(通常は review.fetch_review_status)を渡すと、同じ PR を
+    review_check_ttl 秒間隔で確認し、新しいレビュー・コメントがあれば queued に
+    戻す。マージ済み・クローズ済みの PR は以後の確認から除外する。
     """
 
     def emit(message: str) -> None:
@@ -424,7 +445,8 @@ def run_loop(
     probe_status: usage.UsageStatus | None = None
     next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
     next_ci_check = 0.0
-    resolved_prs: set[str] = set()  # マージ済み・クローズ済みで監視を終えた PR
+    next_review_check = 0.0
+    resolved_prs: set[str] = set()  # マージ済み・クローズ済みで監視を終えた PR(CI・レビュー共用)
     if usage_threshold is not None:
         threshold = usage_threshold
     elif budget is not None:
@@ -449,6 +471,13 @@ def run_loop(
                     conn, fetch=pr_status_fetch, resolved=resolved_prs
                 ):
                     emit(f"requeue #{requeued.id} {requeued.ref}: PR CI failed ({pr_url})")
+
+            if review_status_fetch is not None and time.monotonic() >= next_review_check:
+                next_review_check = time.monotonic() + review_check_ttl
+                for requeued, pr_url in review.requeue_review_requests(
+                    conn, fetch=review_status_fetch, resolved=resolved_prs
+                ):
+                    emit(f"requeue #{requeued.id} {requeued.ref}: PR review activity ({pr_url})")
 
             # 開始候補がないときは使用率を取りに行かない(アイドル時の無駄な実行を避ける)
             has_queued = registry.next_queued(conn) is not None

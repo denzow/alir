@@ -439,3 +439,84 @@ def test_run_loop_does_not_requeue_merged_pr(dbdir: Path) -> None:
     assert runner.prompts == []  # type: ignore[attr-defined]
     conn = db.connect(dbdir)
     assert registry.get(conn, issue.id).status == registry.STATUS_DONE
+
+
+def test_prompt_includes_review_request_once(dbdir: Path) -> None:
+    """レビュー指摘の記録がプロンプトに載り、1 回で消費される。"""
+    from alir import review
+
+    issue = _add_issue(dbdir)
+    review.mark_review_requested(db.connect(dbdir), issue.ref, PR_URL)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert PR_URL in prompt
+    assert "レビュー指摘が付いている" in prompt
+    assert "新しい PR は作らない" in prompt
+    assert review.take_review_request(db.connect(dbdir), issue.ref) is None
+
+
+def test_prompt_omits_review_request_without_mark(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "レビュー指摘が付いている" not in prompt
+
+
+def test_process_issue_done_advances_review_watermark(dbdir: Path) -> None:
+    """done で終えたセッションまでの活動は、レビュー監視の検知対象にしない。"""
+    from alir import review
+
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert review.last_seen(db.connect(dbdir), issue.ref) is not None
+
+
+def test_run_loop_requeues_done_issue_with_review_activity(dbdir: Path) -> None:
+    """レビュー指摘が付いた PR を持つ done の Issue が、人手なしで再実行される。"""
+    from alir import review
+
+    issue = _add_done_issue_with_pr(dbdir)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        review_status_fetch=lambda url: review.ReviewStatus(
+            state="OPEN", events=("2026-08-01T00:00:00Z",)
+        ),
+        log=logs.append,
+    )
+    assert any("PR review activity" in line for line in logs)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert PR_URL in prompt
+    assert "レビュー指摘が付いている" in prompt
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_DONE
+
+
+def test_run_loop_does_not_requeue_review_on_merged_pr(dbdir: Path) -> None:
+    from alir import review
+
+    issue = _add_done_issue_with_pr(dbdir)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        review_status_fetch=lambda url: review.ReviewStatus(
+            state="MERGED", events=("2026-08-01T00:00:00Z",)
+        ),
+        log=lambda _: None,
+    )
+    assert runner.prompts == []  # type: ignore[attr-defined]
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_DONE
