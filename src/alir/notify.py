@@ -4,7 +4,8 @@
 Pushover の認証情報は settings(alir pushover set)を優先し、
 未設定なら環境変数 ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER を使う。
 どちらもなければ送らない。
-通知に含める Web UI の URL は ALIR_WEB_URL(例: http://192.168.1.10:8710)で指定する。
+通知に含める Web UI の URL(例: http://192.168.1.10:8710)も同様に
+settings(alir web-url set)を優先し、未設定なら環境変数 ALIR_WEB_URL を使う。
 """
 
 from __future__ import annotations
@@ -71,6 +72,18 @@ def pushover_source(conn: iceql.Connection | None = None) -> str | None:
     return None
 
 
+def web_url(conn: iceql.Connection | None = None) -> str | None:
+    """通知に含める Web UI の URL を settings、なければ環境変数から読む。"""
+    # settings の読み取り失敗(データディレクトリ未作成など)は環境変数で継続する
+    with contextlib.suppress(Exception):
+        if conn is None:
+            conn = db.connect(config.data_dir())
+        url = settings.web_url(conn)
+        if url is not None:
+            return url
+    return os.environ.get(ENV_WEB_URL) or None
+
+
 def send_pushover(message: str, *, url: str | None) -> bool:
     """Pushover に通知を送る。認証情報がなければ何もせず False を返す。"""
     creds = pushover_credentials()
@@ -88,11 +101,10 @@ def send_pushover(message: str, *, url: str | None) -> bool:
 
 def notify_message(message: str) -> None:
     """メッセージを各チャネルへ通知する。失敗は握りつぶす。"""
-    web_url = os.environ.get(ENV_WEB_URL)
     with contextlib.suppress(Exception):
         send_desktop(message)
     with contextlib.suppress(Exception):
-        send_pushover(message, url=web_url)
+        send_pushover(message, url=web_url())
 
 
 def notify_question(question: Question) -> None:

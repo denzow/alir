@@ -241,3 +241,30 @@ def test_pushover_test_sends(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert result.exit_code == 0
     assert result.output.strip() == "sent"
     assert sent
+
+
+def test_web_url_show_set_clear(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import notify
+
+    monkeypatch.delenv(notify.ENV_WEB_URL, raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["web-url"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "(not set)"
+
+    result = runner.invoke(main, ["web-url", "set", "http://192.168.1.10:8710"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["web-url"])
+    assert result.output.strip() == "http://192.168.1.10:8710"
+
+    result = runner.invoke(main, ["web-url", "clear"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["web-url"])
+    assert result.output.strip() == "(not set)"
+
+
+def test_web_url_set_requires_scheme(dbdir: Path) -> None:
+    result = CliRunner().invoke(main, ["web-url", "set", "192.168.1.10:8710"])
+    assert result.exit_code != 0
+    assert "http://" in result.output

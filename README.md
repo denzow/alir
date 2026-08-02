@@ -35,6 +35,9 @@ $ alir model set sonnet
 $ alir pushover set --token <api-token> --user <user-key>
 $ alir pushover test
 
+# Set the Web UI URL opened from notifications (use a LAN-reachable address)
+$ alir web-url set http://192.168.1.10:8710
+
 # Start everything in one process: loop driver + Web UI + MCP (HTTP)
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 

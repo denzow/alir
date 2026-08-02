@@ -16,6 +16,7 @@ def dbdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv(ENV_DATA_DIR, str(path))
     monkeypatch.delenv(notify.ENV_PUSHOVER_TOKEN, raising=False)
     monkeypatch.delenv(notify.ENV_PUSHOVER_USER, raising=False)
+    monkeypatch.delenv(notify.ENV_WEB_URL, raising=False)
     return path
 
 
@@ -79,3 +80,32 @@ def test_send_pushover_posts_credentials_from_settings(
     assert fields["user"] == ["db-user"]
     assert fields["message"] == ["hello"]
     assert fields["url"] == ["http://example.com"]
+
+
+def test_web_url_none_without_config(dbdir: Path) -> None:
+    assert notify.web_url() is None
+
+
+def test_web_url_from_env(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(notify.ENV_WEB_URL, "http://env:8710")
+    assert notify.web_url() == "http://env:8710"
+
+
+def test_web_url_settings_take_precedence(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(notify.ENV_WEB_URL, "http://env:8710")
+    settings.set_web_url(db.connect(dbdir), "http://192.168.1.10:8710")
+    assert notify.web_url() == "http://192.168.1.10:8710"
+
+
+def test_notify_message_includes_web_url(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings.set_web_url(db.connect(dbdir), "http://192.168.1.10:8710")
+    sent: list[str | None] = []
+
+    def fake_send(message: str, *, url: str | None) -> bool:
+        sent.append(url)
+        return True
+
+    monkeypatch.setattr(notify, "send_pushover", fake_send)
+    monkeypatch.setattr(notify, "send_desktop", lambda message: None)
+    notify.notify_message("hello")
+    assert sent == ["http://192.168.1.10:8710"]

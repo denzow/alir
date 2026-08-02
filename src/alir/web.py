@@ -322,11 +322,18 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
         "push_branches": settings.push_branches(conn),
         "workdirs": registry.list_workdirs(conn),
         "pushover_status": notify.pushover_source(conn),
+        "web_url": settings.web_url(conn),
+        "web_url_env": os.environ.get(notify.ENV_WEB_URL),
     }
 
 
 async def _settings_result(
-    request: Request, dbdir: Path, error: str | None, *, saved: bool = False, notice: str | None = None
+    request: Request,
+    dbdir: Path,
+    error: str | None,
+    *,
+    saved: bool = False,
+    notice: str | None = None,
 ) -> Response:
     """settings への POST の結果を返す。htmx ならフォーム断片、通常はリダイレクト。"""
     if _is_htmx(request):
@@ -465,7 +472,7 @@ async def settings_pushover_test(request: Request) -> Response:
     try:
         sent = await db.run_in_thread(
             lambda: notify.send_pushover(
-                "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
+                "alir からのテスト通知", url=notify.web_url(db.connect(dbdir))
             )
         )
         if sent:
@@ -475,6 +482,27 @@ async def settings_pushover_test(request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001
         error = f"送信に失敗しました: {exc}"
     return await _settings_result(request, dbdir, error, notice=notice)
+
+
+@router.post("/settings/web-url/set")
+async def settings_web_url_set(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    url = str(form.get("url") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(lambda: settings.set_web_url(db.connect(dbdir), url))
+    except SettingsError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/web-url/clear")
+async def settings_web_url_clear(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    await db.run_in_thread(lambda: settings.clear_web_url(db.connect(dbdir)))
+    return await _settings_result(request, dbdir, None)
 
 
 async def _loop_context(dbdir: Path) -> dict[str, Any]:

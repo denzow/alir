@@ -748,3 +748,53 @@ def test_settings_pushover_test_reports_unconfigured(
     monkeypatch.setattr(notify, "send_pushover", lambda message, *, url: False)
     res = client.post("/settings/pushover/test", headers={"HX-Request": "true"})
     assert "未設定のため送信できません" in res.text
+
+
+def test_settings_web_url_set_and_clear(
+    client: TestClient, dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import notify, settings
+
+    monkeypatch.delenv(notify.ENV_WEB_URL, raising=False)
+    res = client.post(
+        "/settings/web-url/set",
+        data={"url": "http://192.168.1.10:8710"},
+        headers={"HX-Request": "true"},
+    )
+    assert 'value="http://192.168.1.10:8710"' in res.text
+    assert settings.web_url(db.connect(dbdir)) == "http://192.168.1.10:8710"
+
+    res = client.post("/settings/web-url/clear", headers={"HX-Request": "true"})
+    assert settings.web_url(db.connect(dbdir)) is None
+
+
+def test_settings_web_url_invalid_shows_error(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/web-url/set",
+        data={"url": "192.168.1.10:8710"},
+        headers={"HX-Request": "true"},
+    )
+    assert "must start with http" in res.text
+    assert settings.web_url(db.connect(dbdir)) is None
+
+
+def test_settings_pushover_test_uses_saved_web_url(
+    client: TestClient, dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import notify, settings
+
+    conn = db.connect(dbdir)
+    settings.set_pushover(conn, token="t", user="u")
+    settings.set_web_url(conn, "http://192.168.1.10:8710")
+    urls: list[str | None] = []
+
+    def fake_send(message: str, *, url: str | None) -> bool:
+        urls.append(url)
+        return True
+
+    monkeypatch.setattr(notify, "send_pushover", fake_send)
+    res = client.post("/settings/pushover/test", headers={"HX-Request": "true"})
+    assert "テスト通知を送信しました" in res.text
+    assert urls == ["http://192.168.1.10:8710"]

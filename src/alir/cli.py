@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -335,9 +334,7 @@ def pushover_test() -> None:
     from alir import notify
 
     try:
-        sent = notify.send_pushover(
-            "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
-        )
+        sent = notify.send_pushover("alir からのテスト通知", url=notify.web_url())
     except Exception as exc:  # noqa: BLE001
         raise click.ClickException(f"failed to send: {exc}") from exc
     if not sent:
@@ -345,6 +342,38 @@ def pushover_test() -> None:
             "not configured: alir pushover set --token ... --user ... で設定する"
         )
     click.echo("sent")
+
+
+@main.group("web-url", invoke_without_command=True)
+@click.pass_context
+def web_url_group(ctx: click.Context) -> None:
+    """通知に含める Web UI の URL を操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        from alir import notify
+
+        click.echo(notify.web_url() or "(not set)")
+
+
+@web_url_group.command("set")
+@click.argument("url")
+def web_url_set(url: str) -> None:
+    """通知に含める Web UI の URL を設定する(LAN 内からアクセスできるもの)。
+
+    例: alir web-url set http://192.168.1.10:8710
+    """
+    conn = db.connect(data_dir())
+    try:
+        settings.set_web_url(conn, url)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {url.strip()}")
+
+
+@web_url_group.command("clear")
+def web_url_clear() -> None:
+    """Web UI の URL の設定を消す(環境変数があればそちらに戻る)。"""
+    settings.clear_web_url(db.connect(data_dir()))
+    click.echo("cleared")
 
 
 @main.group("resume", invoke_without_command=True)
