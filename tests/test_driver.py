@@ -783,6 +783,63 @@ def test_run_claude_omits_resume_flag_without_session(
     assert "--resume" not in captured["cmd"]
 
 
+def test_run_claude_passes_model_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    dbdir = tmp_path / "data"
+    dbdir.mkdir()
+    driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir, model="sonnet")
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
+
+
+def test_run_claude_omits_model_flag_without_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    dbdir = tmp_path / "data"
+    dbdir.mkdir()
+    driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir)
+    assert "--model" not in captured["cmd"]
+
+
+def test_process_issue_passes_model_from_settings(dbdir: Path) -> None:
+    """settings にモデルが設定されていれば runner に渡り、未設定なら渡らない。"""
+    from alir import settings
+
+    issue = _add_issue(dbdir)
+    models: list[str | None] = []
+
+    def run(
+        *, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False, model=None
+    ) -> RunResult:
+        models.append(model)
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    driver.process_issue(dbdir, issue.id, runner=run, worktree=_fake_worktree)
+    settings.set_model(db.connect(dbdir), "sonnet")
+    issue2 = registry.add(
+        db.connect(dbdir), url="https://github.com/denzow/alir/issues/99", workdir="/tmp/alir"
+    )
+    driver.process_issue(dbdir, issue2.id, runner=run, worktree=_fake_worktree)
+    assert models == [None, "sonnet"]
+
+
 def test_process_issue_resumes_with_marked_session(dbdir: Path) -> None:
     """再開の印があれば --resume 用のセッション ID が runner に渡り、印は消費される。"""
     from alir import control, reports

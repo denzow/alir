@@ -261,6 +261,37 @@ def retry_limit_set(limit: int) -> None:
     click.echo(f"set: {limit}")
 
 
+@main.group("model", invoke_without_command=True)
+@click.pass_context
+def model_group(ctx: click.Context) -> None:
+    """セッションに使うモデルを操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        click.echo(settings.model(conn) or "(default)")
+
+
+@model_group.command("set")
+@click.argument("model")
+def model_set(model: str) -> None:
+    """セッションに使うモデルを設定する。次に開始するセッションから使われる。
+
+    エイリアス(sonnet / opus など)と完全なモデル ID のどちらも指定できる。
+    """
+    conn = db.connect(data_dir())
+    try:
+        settings.set_model(conn, model)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {model.strip()}")
+
+
+@model_group.command("clear")
+def model_clear() -> None:
+    """モデルの設定を消し、claude の既定に戻す。"""
+    settings.clear_model(db.connect(data_dir()))
+    click.echo("cleared")
+
+
 @main.group("resume", invoke_without_command=True)
 @click.pass_context
 def resume_group(ctx: click.Context) -> None:

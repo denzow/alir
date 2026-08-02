@@ -72,6 +72,22 @@ def test_set_resume_enabled_roundtrip(conn) -> None:  # type: ignore[no-untyped-
     assert settings.resume_enabled(conn) is True
 
 
+def test_model_default_none(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.model(conn) is None
+
+
+def test_set_and_clear_model(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_model(conn, " sonnet ")
+    assert settings.model(conn) == "sonnet"
+    settings.clear_model(conn)
+    assert settings.model(conn) is None
+
+
+def test_set_empty_model_rejected(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_model(conn, "  ")
+
+
 def test_push_branches_default_empty(conn) -> None:  # type: ignore[no-untyped-def]
     assert settings.push_branches(conn) == {}
     assert settings.push_branch(conn, "/tmp/none") is None

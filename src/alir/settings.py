@@ -27,6 +27,9 @@ KEY_RESUME_ENABLED = "resume_enabled"
 KEY_RETRY_LIMIT = "retry_limit"
 DEFAULT_RETRY_LIMIT = 2
 
+# セッション(claude -p)に --model で渡すモデル名。未設定なら claude の既定に従う
+KEY_MODEL = "model"
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -98,6 +101,28 @@ def resume_enabled(conn: iceql.Connection) -> bool:
 def set_resume_enabled(conn: iceql.Connection, enabled: bool) -> None:
     """park からの再開で --resume を使うかどうかを設定する(挙動の切り分け用)。"""
     control.set_value(conn, KEY_RESUME_ENABLED, "1" if enabled else "0")
+
+
+def model(conn: iceql.Connection) -> str | None:
+    """セッションに渡すモデル名を返す。未設定なら None(claude の既定に従う)。
+
+    モデル名の妥当性は検証しない。エイリアス(sonnet / opus など)と
+    完全なモデル ID のどちらも claude 側がそのまま解釈する。
+    """
+    return control.get_value(conn, KEY_MODEL) or None
+
+
+def set_model(conn: iceql.Connection, model: str) -> None:
+    """セッションに渡すモデル名を設定する。次に開始するセッションから使われる。"""
+    model = model.strip()
+    if not model:
+        raise SettingsError("model is empty")
+    control.set_value(conn, KEY_MODEL, model)
+
+
+def clear_model(conn: iceql.Connection) -> None:
+    """モデル名の設定を消し、claude の既定に戻す。"""
+    control.set_value(conn, KEY_MODEL, "")
 
 
 def retry_limit(conn: iceql.Connection) -> int:
