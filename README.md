@@ -28,6 +28,9 @@ $ alir push-branch set --workdir ~/work/repo --branch develop
 # Toggle claude -p --resume when resuming answered parked issues (enabled by default)
 $ alir resume disable
 
+# Switch the model used by sessions (falls back to claude's default when unset)
+$ alir model set sonnet
+
 # Start everything in one process: loop driver + Web UI + MCP (HTTP)
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 

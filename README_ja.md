@@ -28,6 +28,9 @@ $ alir push-branch set --workdir ~/work/repo --branch develop
 # park からの再開での claude -p --resume 利用を切り替える(既定は有効)
 $ alir resume disable
 
+# セッションに使うモデルを切り替える(未設定なら claude の既定)
+$ alir model set sonnet
+
 # ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 

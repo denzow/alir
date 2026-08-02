@@ -798,6 +798,22 @@ def test_run_claude_passes_model_flag(tmp_path: Path, monkeypatch: pytest.Monkey
     driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir, model="sonnet")
     cmd = captured["cmd"]
     assert cmd[cmd.index("--model") + 1] == "sonnet"
+
+
+def test_run_claude_omits_model_flag_without_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    dbdir = tmp_path / "data"
+    dbdir.mkdir()
     driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir)
     assert "--model" not in captured["cmd"]
 
