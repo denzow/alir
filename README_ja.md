@@ -20,6 +20,7 @@ $ alir issues add https://github.com/owner/repo/issues/13 --workdir ~/work/repo 
     --mode refine --note "対象は API 層だけにする"
 $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
+$ alir issues targets add --label agent-ready --workdir ~/work/repo  # ラベルの自動取り込み対象に登録
 
 # ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000

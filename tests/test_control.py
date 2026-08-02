@@ -35,6 +35,15 @@ def test_missing_report_marker_roundtrip(dbdir: Path) -> None:
     assert control.missing_report_requeued_at(conn, "denzow/alir#12") is None
 
 
+def test_clear_value_removes_key(dbdir: Path) -> None:
+    conn = db.connect(dbdir)
+    control.set_value(conn, "k", "v")
+    control.clear_value(conn, "k")
+    assert control.get_value(conn, "k") is None
+    # 未設定のキーを消してもエラーにならない
+    control.clear_value(conn, "k")
+
+
 def test_driver_alive_by_heartbeat(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     assert control.driver_alive(conn) is False

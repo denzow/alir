@@ -137,6 +137,65 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     assert statuses == [registry.STATUS_DONE, registry.STATUS_DONE]
 
 
+def test_run_loop_imports_labeled_issues_once_per_ttl(dbdir: Path, tmp_path: Path) -> None:
+    """取り込み対象があればキューへ自動登録され、TTL 内は再検索しない。"""
+    from alir import control, importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+
+    calls: list[str] = []
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        calls.append(label)
+        return [{"url": URL, "title": "自動取り込み"}]
+
+    runner = _reporting_runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        import_fetch=fetch,
+        log=logs.append,
+    )
+
+    conn = db.connect(dbdir)
+    items = registry.list_issues(conn)
+    assert [(i.url, i.status) for i in items] == [(URL, registry.STATUS_DONE)]
+    # 取り込み → 処理完了 → 空キュー確認、と複数サイクル回っても検索は 1 回
+    assert calls == ["alir"]
+    assert any(m.startswith("import #1") for m in logs)
+    assert any("import #1" in e.message for e in control.recent_events(conn))
+
+
+def test_run_loop_emits_import_errors(dbdir: Path, tmp_path: Path) -> None:
+    from alir import importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        raise importer.ImporterError("gh issue list failed: boom")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        import_fetch=fetch,
+        log=logs.append,
+    )
+    assert any("import error" in m and "boom" in m for m in logs)
+
+
 def test_prompt_instructs_report_result(dbdir: Path) -> None:
     issue = _add_issue(dbdir)
     runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
@@ -490,3 +549,82 @@ def test_report_clears_missing_report_marker(dbdir: Path) -> None:
         driver.process_issue(dbdir, issue.id, runner=silent, worktree=_fake_worktree).status
         == registry.STATUS_QUEUED
     )
+
+
+PR_URL = "https://github.com/denzow/alir/pull/34"
+
+
+def test_prompt_includes_ci_failure_once(dbdir: Path) -> None:
+    """CI 失敗の記録がプロンプトに載り、1 回で消費される。"""
+    from alir import ci
+
+    issue = _add_issue(dbdir)
+    ci.mark_ci_failed(db.connect(dbdir), issue.ref, PR_URL)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert PR_URL in prompt
+    assert "CI が失敗している" in prompt
+    assert "新しい PR は作らない" in prompt
+    assert ci.take_ci_failure(db.connect(dbdir), issue.ref) is None
+
+
+def test_prompt_omits_ci_failure_without_mark(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "CI が失敗している" not in prompt
+
+
+def _add_done_issue_with_pr(dbdir: Path) -> registry.Issue:
+    from alir import reports
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp/alir")
+    reports.add(conn, issue=issue.ref, summary="実装して PR 作成", pr_url=PR_URL)
+    return registry.set_status(conn, issue.id, registry.STATUS_DONE)
+
+
+def test_run_loop_requeues_done_issue_with_failed_ci(dbdir: Path) -> None:
+    """CI が失敗した PR を持つ done の Issue が、人手なしで再実行される。"""
+    from alir import ci
+
+    issue = _add_done_issue_with_pr(dbdir)
+
+    runner = _reporting_runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        pr_status_fetch=lambda url: ci.PrStatus(state="OPEN", ci_failed=True),
+        log=logs.append,
+    )
+    assert any("PR CI failed" in line for line in logs)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert PR_URL in prompt
+    assert "CI が失敗している" in prompt
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_DONE
+
+
+def test_run_loop_does_not_requeue_merged_pr(dbdir: Path) -> None:
+    from alir import ci
+
+    issue = _add_done_issue_with_pr(dbdir)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        pr_status_fetch=lambda url: ci.PrStatus(state=ci.STATE_MERGED, ci_failed=True),
+        log=lambda _: None,
+    )
+    assert runner.prompts == []  # type: ignore[attr-defined]
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_DONE

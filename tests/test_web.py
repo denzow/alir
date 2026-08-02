@@ -464,6 +464,64 @@ def test_settings_save_invalid_template_keeps_current(client: TestClient, dbdir:
     assert settings.branch_template(conn) == "alir/issue-{number}"
 
 
+def test_settings_page_shows_import_targets(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    from alir import importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    importer.add_target(db.connect(dbdir), workdir=str(workdir), label="alir")
+    res = client.get("/settings")
+    assert "自動取り込み" in res.text
+    assert "alir" in res.text
+    assert str(workdir.resolve()) in res.text
+
+
+def test_settings_targets_add(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/settings/targets/add",
+        data={"workdir": str(workdir), "label": "alir"},
+        headers={"HX-Request": "true"},
+    )
+    assert res.status_code == 200
+    targets = importer.list_targets(db.connect(dbdir))
+    assert [(t.workdir, t.label) for t in targets] == [(str(workdir.resolve()), "alir")]
+
+
+def test_settings_targets_add_missing_workdir_shows_error(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    from alir import importer
+
+    res = client.post(
+        "/settings/targets/add",
+        data={"workdir": str(tmp_path / "missing"), "label": "alir"},
+        headers={"HX-Request": "true"},
+    )
+    assert "workdir not found" in res.text
+    assert importer.list_targets(db.connect(dbdir)) == []
+
+
+def test_settings_targets_remove(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    importer.add_target(db.connect(dbdir), workdir=str(workdir), label="alir")
+    res = client.post(
+        "/settings/targets/remove",
+        data={"workdir": str(workdir.resolve()), "label": "alir"},
+        headers={"HX-Request": "true"},
+    )
+    assert res.status_code == 200
+    assert importer.list_targets(db.connect(dbdir)) == []
+
+
 def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
     from alir import control
 
