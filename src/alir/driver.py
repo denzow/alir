@@ -376,10 +376,12 @@ def run_claude(
     skip_permissions: bool = False,
     mcp_url: str | None = None,
     resume_session_id: str | None = None,
+    model: str | None = None,
 ) -> RunResult:
     """claude -p を 1 回実行し、結果 JSON から session_id と成否を取り出す。
 
     resume_session_id があれば --resume を付け、park 時のセッションを文脈ごと再開する。
+    model があれば --model で使うモデルを指定する。
     """
     cmd = [
         "claude",
@@ -395,6 +397,8 @@ def run_claude(
     ]
     if resume_session_id is not None:
         cmd += ["--resume", resume_session_id]
+    if model is not None:
+        cmd += ["--model", model]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
     env = dict(os.environ, ALIR_DATA_DIR=str(dbdir))
@@ -435,6 +439,7 @@ def process_issue(
     再開時は前回のブランチをそのまま使う。workdir が直接 push 運用
     (settings.push_branch)なら再開時も含め常に現在の push 先ブランチを使い、
     PR を作らない手順のプロンプトにする。
+    セッションのモデルは settings.model に従う(未設定なら claude の既定)。
     park からの再開(回答検知が resume_session を記録済み)は、settings で
     無効化されていなければ --resume で前回セッションを文脈ごと再開する。
     resume が失敗した場合(セッションの期限切れなど)は新規セッションに
@@ -466,6 +471,7 @@ def process_issue(
         branch = issue.branch or settings.render_branch(template, issue)
     ci_failed_pr = ci.take_ci_failure(conn, issue.ref)
     resume_sid = control.resume_session(conn, issue.ref) if settings.resume_enabled(conn) else None
+    model = settings.model(conn)
     try:
         path = worktree(issue, branch, push=push_branch is not None)
         prompt = build_prompt(
@@ -477,14 +483,16 @@ def process_issue(
             ci_failed_pr=ci_failed_pr,
             direct_push=push_branch is not None,
         )
+        run_kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "cwd": path,
+            "dbdir": dbdir,
+            "skip_permissions": skip_permissions,
+        }
+        if model is not None:
+            run_kwargs["model"] = model
         if resume_sid is not None:
-            result = runner(
-                prompt=prompt,
-                cwd=path,
-                dbdir=dbdir,
-                skip_permissions=skip_permissions,
-                resume_session_id=resume_sid,
-            )
+            result = runner(**run_kwargs, resume_session_id=resume_sid)
             if result.exit_code != 0 and not result.rate_limited:
                 # セッションの期限切れなどで resume できなかったとみなし、
                 # 新規セッションでやり直す(回答はプロンプトに含まれている)
@@ -492,11 +500,9 @@ def process_issue(
                     db.connect(dbdir),
                     f"issue #{iid} の resume に失敗したため新規セッションで再実行する",
                 )
-                result = runner(
-                    prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions
-                )
+                result = runner(**run_kwargs)
         else:
-            result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
+            result = runner(**run_kwargs)
     except Exception:
         registry.set_status(db.connect(dbdir), iid, registry.STATUS_FAILED)
         raise

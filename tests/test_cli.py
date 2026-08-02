@@ -161,3 +161,26 @@ def test_resume_show_enable_disable(dbdir: Path) -> None:
     assert result.exit_code == 0
     result = runner.invoke(main, ["resume"])
     assert result.output.strip() == "enabled"
+
+
+def test_model_show_set_clear(dbdir: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["model"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "(default)"
+
+    result = runner.invoke(main, ["model", "set", "sonnet"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["model"])
+    assert result.output.strip() == "sonnet"
+
+    result = runner.invoke(main, ["model", "clear"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["model"])
+    assert result.output.strip() == "(default)"
+
+
+def test_model_set_empty_fails(dbdir: Path) -> None:
+    result = CliRunner().invoke(main, ["model", "set", "  "])
+    assert result.exit_code != 0
