@@ -669,3 +669,82 @@ def test_issues_requeue_resets_retry_state(client: TestClient, dbdir: Path, tmp_
     assert requeued.status == registry.STATUS_QUEUED
     assert requeued.retries == 0
     assert get_value(conn, f"retry_exhausted_notified:{requeued.ref}") is None
+
+
+@pytest.fixture
+def _no_pushover_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import notify
+
+    monkeypatch.delenv(notify.ENV_PUSHOVER_TOKEN, raising=False)
+    monkeypatch.delenv(notify.ENV_PUSHOVER_USER, raising=False)
+
+
+@pytest.mark.usefixtures("_no_pushover_env")
+def test_settings_page_shows_pushover_not_set(client: TestClient, dbdir: Path) -> None:
+    res = client.get("/settings")
+    assert "Pushover はまだ設定されていません" in res.text
+
+
+@pytest.mark.usefixtures("_no_pushover_env")
+def test_settings_pushover_set_and_clear(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/pushover/set",
+        data={"token": "app-token", "user": "user-key"},
+        headers={"HX-Request": "true"},
+    )
+    assert "設定済み(この画面で保存)" in res.text
+    assert "app-token" not in res.text  # トークンの値は画面に出さない
+    assert settings.pushover(db.connect(dbdir)) == ("app-token", "user-key")
+
+    res = client.post("/settings/pushover/clear", headers={"HX-Request": "true"})
+    assert "Pushover はまだ設定されていません" in res.text
+    assert settings.pushover(db.connect(dbdir)) is None
+
+
+@pytest.mark.usefixtures("_no_pushover_env")
+def test_settings_pushover_set_empty_shows_error(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/pushover/set",
+        data={"token": "", "user": ""},
+        headers={"HX-Request": "true"},
+    )
+    assert "token and user are required" in res.text
+    assert settings.pushover(db.connect(dbdir)) is None
+
+
+def test_settings_page_shows_pushover_environment(
+    client: TestClient, dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import notify
+
+    monkeypatch.setenv(notify.ENV_PUSHOVER_TOKEN, "t")
+    monkeypatch.setenv(notify.ENV_PUSHOVER_USER, "u")
+    res = client.get("/settings")
+    assert "設定済み(環境変数)" in res.text
+
+
+@pytest.mark.usefixtures("_no_pushover_env")
+def test_settings_pushover_test_sends(
+    client: TestClient, dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import notify, settings
+
+    settings.set_pushover(db.connect(dbdir), token="t", user="u")
+    monkeypatch.setattr(notify, "send_pushover", lambda message, *, url: True)
+    res = client.post("/settings/pushover/test", headers={"HX-Request": "true"})
+    assert "テスト通知を送信しました" in res.text
+
+
+@pytest.mark.usefixtures("_no_pushover_env")
+def test_settings_pushover_test_reports_unconfigured(
+    client: TestClient, dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import notify
+
+    monkeypatch.setattr(notify, "send_pushover", lambda message, *, url: False)
+    res = client.post("/settings/pushover/test", headers={"HX-Request": "true"})
+    assert "未設定のため送信できません" in res.text

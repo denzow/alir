@@ -16,6 +16,8 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+import iceql
+
 from alir import config, db, settings
 from alir.questions import Question
 from alir.registry import Issue
@@ -49,6 +51,23 @@ def pushover_credentials() -> tuple[str, str] | None:
     user = os.environ.get(ENV_PUSHOVER_USER)
     if token and user:
         return token, user
+    return None
+
+
+def pushover_source(conn: iceql.Connection | None = None) -> str | None:
+    """認証情報の出所を返す。"settings" / "environment" / None(未設定)。
+
+    CLI と Web UI が設定状態の表示に使う。判定は pushover_credentials と
+    同じで、settings の読み取り失敗は環境変数の判定に落ちる。
+    conn を渡すとその接続の settings で判定する(Web UI は自分の dbdir を使う)。
+    """
+    with contextlib.suppress(Exception):
+        if conn is None:
+            conn = db.connect(config.data_dir())
+        if settings.pushover(conn) is not None:
+            return "settings"
+    if os.environ.get(ENV_PUSHOVER_TOKEN) and os.environ.get(ENV_PUSHOVER_USER):
+        return "environment"
     return None
 
 

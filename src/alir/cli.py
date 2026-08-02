@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -297,24 +298,20 @@ def model_clear() -> None:
 def pushover_group(ctx: click.Context) -> None:
     """Pushover 通知の連携を操作する。サブコマンドなしなら設定状態を表示する。"""
     if ctx.invoked_subcommand is None:
-        import os
-
         from alir import notify
 
-        conn = db.connect(data_dir())
-        if settings.pushover(conn) is not None:
-            click.echo("configured (settings)")
-        elif os.environ.get(notify.ENV_PUSHOVER_TOKEN) and os.environ.get(
-            notify.ENV_PUSHOVER_USER
-        ):
-            click.echo("configured (environment)")
-        else:
-            click.echo("not set")
+        source = notify.pushover_source()
+        click.echo(f"configured ({source})" if source else "not set")
 
 
 @pushover_group.command("set")
-@click.option("--token", required=True, help="Pushover の API トークン")
-@click.option("--user", required=True, help="Pushover のユーザーキー")
+@click.option(
+    "--token",
+    prompt="API token",
+    hide_input=True,
+    help="Pushover の API トークン。省略すると非表示で入力を求める",
+)
+@click.option("--user", prompt="User key", help="Pushover のユーザーキー")
 def pushover_set(token: str, user: str) -> None:
     """Pushover の認証情報を設定する。次の通知から使われる。"""
     conn = db.connect(data_dir())
@@ -335,8 +332,6 @@ def pushover_clear() -> None:
 @pushover_group.command("test")
 def pushover_test() -> None:
     """テスト通知を送り、連携設定を確認する。"""
-    import os
-
     from alir import notify
 
     try:
