@@ -23,3 +23,38 @@
     <button>保存する</button>
   </form>
 </div>
+<p class="section-label">自動取り込み</p>
+<div class="card add-form">
+  <p class="hint">
+    登録した workdir のリポジトリからラベル付きのオープンな Issue を定期的に検索し、
+    未登録のものをキュー末尾へ自動登録する。対象が空なら何もしない。
+  </p>
+  {% for target in import_targets %}
+  <form method="post" action="/settings/targets/remove"
+        hx-post="/settings/targets/remove" hx-target="#settings" hx-swap="innerHTML"
+        class="target-row">
+    <input type="hidden" name="workdir" value="{{ target.workdir }}">
+    <input type="hidden" name="label" value="{{ target.label }}">
+    <span class="target-desc"><code>{{ target.label }}</code> {{ target.workdir }}</span>
+    <button>削除</button>
+  </form>
+  {% else %}
+  <p class="empty-inline">取り込み対象はまだありません。</p>
+  {% endfor %}
+  <form method="post" action="/settings/targets/add"
+        hx-post="/settings/targets/add" hx-target="#settings" hx-swap="innerHTML">
+    <div class="field">
+      <label for="target-workdir">ローカルパス</label>
+      <input id="target-workdir" type="text" name="workdir" list="target-workdirs"
+             placeholder="対象リポジトリのローカルパス">
+    </div>
+    <datalist id="target-workdirs">
+      {% for workdir in workdirs %}<option value="{{ workdir }}">{% endfor %}
+    </datalist>
+    <div class="field">
+      <label for="target-label">ラベル</label>
+      <input id="target-label" type="text" name="label" placeholder="alir">
+    </div>
+    <button>対象を追加</button>
+  </form>
+</div>

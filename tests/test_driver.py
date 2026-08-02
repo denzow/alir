@@ -119,6 +119,65 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     assert statuses == [registry.STATUS_DONE, registry.STATUS_DONE]
 
 
+def test_run_loop_imports_labeled_issues_once_per_ttl(dbdir: Path, tmp_path: Path) -> None:
+    """取り込み対象があればキューへ自動登録され、TTL 内は再検索しない。"""
+    from alir import control, importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+
+    calls: list[str] = []
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        calls.append(label)
+        return [{"url": URL, "title": "自動取り込み"}]
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        import_fetch=fetch,
+        log=logs.append,
+    )
+
+    conn = db.connect(dbdir)
+    items = registry.list_issues(conn)
+    assert [(i.url, i.status) for i in items] == [(URL, registry.STATUS_DONE)]
+    # 取り込み → 処理完了 → 空キュー確認、と複数サイクル回っても検索は 1 回
+    assert calls == ["alir"]
+    assert any(m.startswith("import #1") for m in logs)
+    assert any("import #1" in e.message for e in control.recent_events(conn))
+
+
+def test_run_loop_emits_import_errors(dbdir: Path, tmp_path: Path) -> None:
+    from alir import importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        raise importer.ImporterError("gh issue list failed: boom")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        import_fetch=fetch,
+        log=logs.append,
+    )
+    assert any("import error" in m and "boom" in m for m in logs)
+
+
 def test_prompt_instructs_report_result(dbdir: Path) -> None:
     issue = _add_issue(dbdir)
     runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
