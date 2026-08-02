@@ -207,7 +207,7 @@ def build_prompt(
     branch_template にセッションが決める変数({type} / {summary})が含まれる場合は、
     改名の指示を加える。ci_failed_pr があれば、その PR の CI が失敗している旨と
     修正の指示を加える。direct_push が真なら PR を作らず作業ブランチへ直接
-    push する手順にする。
+    push し、push 後に対象 Issue をクローズする手順にする。
     """
     if direct_push:
         implement_steps = [
@@ -215,7 +215,11 @@ def build_prompt(
             "4. テストとリンタが通ることを確認する。",
             f"5. `git push origin {branch}` で作業ブランチへ直接 push する。PR は作らない。",
             "   低影響の判断とその理由はコミットメッセージに記載する。",
-            '6. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
+            f"6. `gh issue close {issue.url} --comment` で対象 Issue をクローズする。",
+            "   コメントには実施内容と対応コミットを記載する。クローズするのは実装を",
+            "   push した場合だけで、リファインメントで終えた場合・park した場合・",
+            "   何もしなかった場合はクローズしない。",
+            '7. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
             f'   issue パラメータには "{issue.ref}" を渡す。',
         ]
     else:
