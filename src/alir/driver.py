@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from alir import control, db, importer, questions, registry, reports, resume, settings, usage
+from alir import ci, control, db, importer, questions, registry, reports, resume, settings, usage
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -134,11 +134,13 @@ def build_prompt(
     answers: list[questions.Question],
     past_reports: list[reports.Report] | None = None,
     branch_template: str | None = None,
+    ci_failed_pr: str | None = None,
 ) -> str:
     """1 Issue を処理するセッションのプロンプトを組み立てる。
 
     branch_template にセッションが決める変数({type} / {summary})が含まれる場合は、
-    改名の指示を加える。
+    改名の指示を加える。ci_failed_pr があれば、その PR の CI が失敗している旨と
+    修正の指示を加える。
     """
     lines = [
         "あなたは GitHub Issue を自律的に処理するエージェントである。",
@@ -146,6 +148,16 @@ def build_prompt(
         f"対象 Issue: {issue.url}",
         f"作業ブランチ: {branch}(すでにチェックアウト済み)",
         "",
+    ]
+    if ci_failed_pr is not None:
+        lines += [
+            "この Issue で過去のセッションが作成した PR の CI が失敗している。",
+            f"対象 PR: {ci_failed_pr}",
+            f"`gh pr checks {ci_failed_pr}` などで失敗内容を確認し、修正をコミットして",
+            "同じブランチに push することで既存の PR を更新する。新しい PR は作らない。",
+            "",
+        ]
+    lines += [
         "手順:",
         f"1. `gh issue view {issue.url} --comments` で Issue とコメントを読み、要件を把握する。",
         "2. Issue が実装に着手できる程度に具体化されているか判断する。",
@@ -301,6 +313,7 @@ def process_issue(
     past_reports = reports.list_reports(conn, issue=issue.ref, limit=3)
     template = settings.branch_template(conn)
     branch = issue.branch or settings.render_branch(template, issue)
+    ci_failed_pr = ci.take_ci_failure(conn, issue.ref)
     try:
         path = worktree(issue, branch)
         prompt = build_prompt(
@@ -309,6 +322,7 @@ def process_issue(
             answers=answered,
             past_reports=past_reports,
             branch_template=None if issue.branch else template,
+            ci_failed_pr=ci_failed_pr,
         )
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
@@ -371,6 +385,8 @@ def run_loop(
     usage_threshold: float | None = None,
     import_interval: float = importer.DEFAULT_INTERVAL,
     import_fetch: importer.Fetch = importer.fetch_labeled_issues,
+    pr_status_fetch: ci.PrStatusFetch | None = None,
+    ci_check_ttl: float = 300.0,
     log: Callable[[str], None] = print,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
@@ -388,6 +404,10 @@ def run_loop(
     取り込み対象(importer)が設定されていれば、import_interval 秒ごとに
     ラベル付き Issue を検索してキュー末尾へ登録する。一時停止中も取り込みは
     続ける(セッションを開始しないだけで、キューへの登録は無害なため)。
+
+    pr_status_fetch(通常は ci.fetch_pr_status)を渡すと、done の Issue の
+    PR を ci_check_ttl 秒間隔で確認し、CI が失敗していれば queued に戻す。
+    マージ済み・クローズ済みの PR は以後の確認から除外する。
     """
 
     def emit(message: str) -> None:
@@ -410,6 +430,8 @@ def run_loop(
     probe_status: usage.UsageStatus | None = None
     next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
     next_import = 0.0  # 自動取り込みの次回実行時刻(monotonic)
+    next_ci_check = 0.0
+    resolved_prs: set[str] = set()  # マージ済み・クローズ済みで監視を終えた PR
     if usage_threshold is not None:
         threshold = usage_threshold
     elif budget is not None:
@@ -435,6 +457,13 @@ def run_loop(
                     emit(f"import #{imported.id} {imported.ref}")
                 for error in outcome.errors:
                     emit(f"import error: {error}")
+
+            if pr_status_fetch is not None and time.monotonic() >= next_ci_check:
+                next_ci_check = time.monotonic() + ci_check_ttl
+                for requeued, pr_url in ci.requeue_ci_failures(
+                    conn, fetch=pr_status_fetch, resolved=resolved_prs
+                ):
+                    emit(f"requeue #{requeued.id} {requeued.ref}: PR CI failed ({pr_url})")
 
             # 開始候補がないときは使用率を取りに行かない(アイドル時の無駄な実行を避ける)
             has_queued = registry.next_queued(conn) is not None
