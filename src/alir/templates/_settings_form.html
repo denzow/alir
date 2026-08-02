@@ -123,6 +123,14 @@
     </div>
     <button>保存する</button>
   </form>
+  {% if web_url %}
+  <form method="post" action="/settings/web-url/clear"
+        hx-post="/settings/web-url/clear" hx-target="#settings" hx-swap="innerHTML"
+        class="target-row">
+    <span class="target-desc"><code>{{ web_url }}</code></span>
+    <button>URL を削除</button>
+  </form>
+  {% endif %}
   <form method="post" action="/settings/web-url/set"
         hx-post="/settings/web-url/set" hx-target="#settings" hx-swap="innerHTML">
     <div class="field">
@@ -133,21 +141,13 @@
     <p class="hint">
       通知をタップしたときに開く、この Web UI の LAN 内 URL。
       {% if not web_url and web_url_env %}
-      現在は環境変数の <code>{{ web_url_env }}</code> を使っている。
+      現在は環境変数 <code>ALIR_WEB_URL</code> の <code>{{ web_url_env }}</code> を使っている。
       {% elif not web_url %}
       未設定の間は通知にリンクが付かない。
       {% endif %}
     </p>
     <button>URL を保存する</button>
   </form>
-  {% if web_url %}
-  <form method="post" action="/settings/web-url/clear"
-        hx-post="/settings/web-url/clear" hx-target="#settings" hx-swap="innerHTML"
-        class="target-row">
-    <span class="target-desc"><code>{{ web_url }}</code></span>
-    <button>URL を削除</button>
-  </form>
-  {% endif %}
   {% if pushover_status %}
   <form method="post" action="/settings/pushover/test"
         hx-post="/settings/pushover/test" hx-target="#settings" hx-swap="innerHTML">

@@ -251,7 +251,7 @@ def test_web_url_show_set_clear(dbdir: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     result = runner.invoke(main, ["web-url"])
     assert result.exit_code == 0
-    assert result.output.strip() == "(not set)"
+    assert result.output.strip() == "not set"
 
     result = runner.invoke(main, ["web-url", "set", "http://192.168.1.10:8710"])
     assert result.exit_code == 0
@@ -261,7 +261,7 @@ def test_web_url_show_set_clear(dbdir: Path, monkeypatch: pytest.MonkeyPatch) ->
     result = runner.invoke(main, ["web-url", "clear"])
     assert result.exit_code == 0
     result = runner.invoke(main, ["web-url"])
-    assert result.output.strip() == "(not set)"
+    assert result.output.strip() == "not set"
 
 
 def test_web_url_set_requires_scheme(dbdir: Path) -> None:

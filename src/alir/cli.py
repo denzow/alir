@@ -351,7 +351,7 @@ def web_url_group(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is None:
         from alir import notify
 
-        click.echo(notify.web_url() or "(not set)")
+        click.echo(notify.web_url() or "not set")
 
 
 @web_url_group.command("set")
