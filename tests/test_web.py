@@ -176,6 +176,42 @@ def test_issues_add_rejects_bad_workdir(client: TestClient) -> None:
     assert "workdir not found" in res.text
 
 
+def test_issues_add_with_mode_and_note(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/issues/add",
+        data={
+            "url": URL,
+            "workdir": str(workdir),
+            "mode": "refine",
+            "note": "仕様だけ詰めてほしい",
+        },
+        follow_redirects=True,
+    )
+    assert res.status_code == 200
+    assert "リファインメントのみ" in res.text
+    assert "仕様だけ詰めてほしい" in res.text
+
+    conn = db.connect(dbdir)
+    issue = registry.get(conn, 1)
+    assert issue.mode == registry.MODE_REFINE
+    assert issue.note == "仕様だけ詰めてほしい"
+
+
+def test_issues_add_rejects_unknown_mode(client: TestClient, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/issues/add",
+        data={"url": URL, "workdir": str(workdir), "mode": "review"},
+        follow_redirects=True,
+    )
+    assert "mode must be one of" in res.text
+
+
 def test_issues_add_rejects_bad_url(client: TestClient, tmp_path: Path) -> None:
     workdir = tmp_path / "repo"
     workdir.mkdir()

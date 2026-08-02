@@ -15,6 +15,9 @@ Claude Code が作業中に人間の判断が必要になったとき、質問�
 ```console
 # 消化対象の Issue を登録する（タイトルは gh で取得される）
 $ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo
+# 作業種別（auto / implement / refine）と補足コメントも指定できる
+$ alir issues add https://github.com/owner/repo/issues/13 --workdir ~/work/repo \
+    --mode refine --note "対象は API 層だけにする"
 $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
 

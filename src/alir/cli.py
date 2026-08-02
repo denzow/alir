@@ -94,12 +94,21 @@ def issues_group(ctx: click.Context) -> None:
     default=".",
     help="対象リポジトリのローカルパス",
 )
-def issues_add(url: str, workdir: Path) -> None:
+@click.option(
+    "--mode",
+    type=click.Choice(registry.MODES),
+    default=registry.MODE_AUTO,
+    help="セッションに求める作業種別。auto はセッションが判断する",
+)
+@click.option("--note", default=None, help="セッションのプロンプトに含める補足コメント")
+def issues_add(url: str, workdir: Path, mode: str, note: str | None) -> None:
     """GitHub Issue の URL を queued として登録する。タイトルは gh で取得する。"""
     conn = db.connect(data_dir())
     title = registry.fetch_title(url)
     try:
-        issue = registry.add(conn, url=url, workdir=str(workdir.resolve()), title=title)
+        issue = registry.add(
+            conn, url=url, workdir=str(workdir.resolve()), title=title, mode=mode, note=note
+        )
     except RegistryError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"added #{issue.id}: {issue.ref} {issue.title or ''}".rstrip())

@@ -19,6 +19,19 @@
     <datalist id="workdirs">
       {% for workdir in workdirs %}<option value="{{ workdir }}">{% endfor %}
     </datalist>
+    <div class="field">
+      <label for="issue-mode">作業種別</label>
+      <select id="issue-mode" name="mode">
+        <option value="auto" selected>おまかせ（セッションが判断）</option>
+        <option value="implement">実装のみ</option>
+        <option value="refine">リファインメントのみ</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="issue-note">補足コメント（プロンプトに含める）</label>
+      <textarea id="issue-note" name="note" rows="2"
+                placeholder="対象範囲の指定や注意点など（任意）"></textarea>
+    </div>
     <button>キューに登録</button>
   </form>
 </div>

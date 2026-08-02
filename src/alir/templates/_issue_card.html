@@ -3,11 +3,14 @@
   <div class="card-top">
     <span class="status">{{ issue.status }}</span>
     <span>#{{ issue.id }}</span>
+    {% if issue.mode == "implement" %}<span class="tag">実装のみ</span>
+    {% elif issue.mode == "refine" %}<span class="tag">リファインメントのみ</span>{% endif %}
     {% if draggable %}<span class="drag-handle" aria-label="ドラッグで並び替え">⠿</span>{% endif %}
   </div>
   <p class="issue-title">{{ issue.title or issue.ref }}</p>
   <p class="issue-ref"><a href="{{ issue.url }}">{{ issue.ref }}</a></p>
   <p class="workdir">{{ issue.workdir }}</p>
+  {% if issue.note %}<p class="issue-note">{{ issue.note }}</p>{% endif %}
   {% set report = reports.get(issue.id) if reports else none %}
   {% if report %}
   <div class="report">

@@ -22,6 +22,12 @@ STATUS_FAILED = "failed"
 
 STATUSES = (STATUS_QUEUED, STATUS_RUNNING, STATUS_PARKED, STATUS_DONE, STATUS_FAILED)
 
+# セッションに求める作業種別。auto はセッションが判断する(従来の挙動)。
+MODE_AUTO = "auto"
+MODE_IMPLEMENT = "implement"
+MODE_REFINE = "refine"
+MODES = (MODE_AUTO, MODE_IMPLEMENT, MODE_REFINE)
+
 # 並び替えの対象。実行前(queued)と再開待ち(parked)は順序に意味がある。
 REORDERABLE = (STATUS_QUEUED, STATUS_PARKED)
 
@@ -29,7 +35,7 @@ _ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 
 _COLUMNS = (
     "id, url, repo, number, workdir, priority, status, session_id, branch, "
-    "created_at, updated_at, title"
+    "created_at, updated_at, title, mode, note"
 )
 
 
@@ -51,6 +57,8 @@ class Issue:
     created_at: str
     updated_at: str
     title: str | None = None
+    mode: str = MODE_AUTO
+    note: str | None = None
 
     @property
     def ref(self) -> str:
@@ -76,6 +84,8 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         created,
         updated,
         title,
+        mode,
+        note,
     ) = row
     return Issue(
         id=int(str(iid)),
@@ -90,6 +100,8 @@ def _row_to_issue(row: tuple[object, ...]) -> Issue:
         created_at=str(created),
         updated_at=str(updated),
         title=None if title is None else str(title),
+        mode=MODE_AUTO if mode is None else str(mode),
+        note=None if note is None else str(note),
     )
 
 
@@ -121,9 +133,19 @@ def add(
     workdir: str,
     priority: int = 0,
     title: str | None = None,
+    mode: str = MODE_AUTO,
+    note: str | None = None,
 ) -> Issue:
-    """Issue を queued として登録する。同じ URL の未完了 Issue があれば拒否する。"""
+    """Issue を queued として登録する。同じ URL の未完了 Issue があれば拒否する。
+
+    mode はセッションに求める作業種別(auto / implement / refine)。
+    note は登録者の補足コメントで、セッションのプロンプトに含める。
+    """
     repo, number = parse_issue_url(url)
+    if mode not in MODES:
+        raise RegistryError(f"mode must be one of {MODES}")
+    if note is not None and not note.strip():
+        note = None
     with db.transaction(conn):
         cur = conn.execute(
             "SELECT COUNT(*) FROM issues WHERE url = ? AND status IN (?, ?, ?)",
@@ -140,8 +162,23 @@ def add(
         iid = int(str(row[0])) + 1
         now = _now()
         conn.execute(
-            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (iid, url, repo, number, workdir, priority, STATUS_QUEUED, None, None, now, now, title),
+            f"INSERT INTO issues ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                iid,
+                url,
+                repo,
+                number,
+                workdir,
+                priority,
+                STATUS_QUEUED,
+                None,
+                None,
+                now,
+                now,
+                title,
+                mode,
+                note,
+            ),
         )
     return get(conn, iid)
 

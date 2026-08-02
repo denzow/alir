@@ -162,17 +162,26 @@ async def issues_add(request: Request) -> Response:
     form = await request.form()
     url = str(form.get("url") or "").strip()
     workdir = str(form.get("workdir") or "").strip()
+    mode = str(form.get("mode") or registry.MODE_AUTO).strip()
+    note = str(form.get("note") or "").strip() or None
 
     error: str | None = None
     workdir_path = Path(workdir).expanduser()
     if not workdir_path.is_dir():
         error = f"workdir not found: {workdir}"
+    elif mode not in registry.MODES:
+        error = f"mode must be one of {registry.MODES}"
     if error is None:
 
         def work() -> None:
             title = registry.fetch_title(url)
             registry.add(
-                db.connect(dbdir), url=url, workdir=str(workdir_path.resolve()), title=title
+                db.connect(dbdir),
+                url=url,
+                workdir=str(workdir_path.resolve()),
+                title=title,
+                mode=mode,
+                note=note,
             )
 
         try:

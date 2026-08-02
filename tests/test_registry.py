@@ -28,6 +28,32 @@ def test_add_registers_queued_issue(conn) -> None:  # type: ignore[no-untyped-de
     assert issue.priority == 5
 
 
+def test_add_defaults_to_auto_mode_without_note(conn) -> None:  # type: ignore[no-untyped-def]
+    issue = registry.add(conn, url=URL, workdir="/tmp/alir")
+    assert issue.mode == registry.MODE_AUTO
+    assert issue.note is None
+
+
+def test_add_stores_mode_and_note(conn) -> None:  # type: ignore[no-untyped-def]
+    issue = registry.add(
+        conn, url=URL, workdir="/tmp/alir", mode=registry.MODE_REFINE, note="仕様だけ詰めたい"
+    )
+    assert issue.mode == registry.MODE_REFINE
+    assert issue.note == "仕様だけ詰めたい"
+    # 再取得でも保持される
+    assert registry.get(conn, issue.id).note == "仕様だけ詰めたい"
+
+
+def test_add_rejects_unknown_mode(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(RegistryError):
+        registry.add(conn, url=URL, workdir="/tmp", mode="review")
+
+
+def test_add_treats_blank_note_as_none(conn) -> None:  # type: ignore[no-untyped-def]
+    issue = registry.add(conn, url=URL, workdir="/tmp", note="   ")
+    assert issue.note is None
+
+
 def test_add_rejects_non_issue_url(conn) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(RegistryError):
         registry.add(conn, url="https://github.com/denzow/alir/pull/12", workdir="/tmp")

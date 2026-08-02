@@ -145,6 +145,20 @@ input[type=text] {
 input[type=text]::placeholder { color: var(--muted); opacity: 0.8; }
 input[type=text]:focus { border-color: var(--accent); outline: none; }
 
+select, textarea {
+  width: 100%; box-sizing: border-box;
+  padding: 0.6rem 0.75rem; margin: 0.3rem 0;
+  border-radius: 8px; border: 1px solid var(--line);
+  background: var(--inset); color: var(--text);
+  font-size: 0.95rem; font-family: inherit;
+}
+textarea::placeholder { color: var(--muted); opacity: 0.8; }
+select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+.issue-note {
+  color: var(--muted); font-size: 0.82rem; margin: 0.2rem 0 0;
+  white-space: pre-wrap;
+}
+
 button {
   border-radius: 8px; border: 1px solid var(--line);
   background: var(--surface); color: var(--text);

@@ -137,39 +137,69 @@ def build_prompt(
 ) -> str:
     """1 Issue を処理するセッションのプロンプトを組み立てる。
 
+    issue.mode に応じて手順を変える。auto はセッションが実装かリファインメントかを
+    判断し、implement / refine は指定された作業だけを行う。
+    issue.note(登録者の補足)があればプロンプトに含める。
     branch_template にセッションが決める変数({type} / {summary})が含まれる場合は、
     改名の指示を加える。
     """
-    lines = [
-        "あなたは GitHub Issue を自律的に処理するエージェントである。",
-        "",
-        f"対象 Issue: {issue.url}",
-        f"作業ブランチ: {branch}(すでにチェックアウト済み)",
-        "",
-        "手順:",
-        f"1. `gh issue view {issue.url} --comments` で Issue とコメントを読み、要件を把握する。",
-        "2. Issue が実装に着手できる程度に具体化されているか判断する。",
-        "   実装に進んでよいのは次のいずれかの場合だけである。",
-        "   - Issue 本文に受け入れ条件(完了条件)と対象範囲が明文化されている",
-        "   - 過去のリファインメント(下記の実施記録や Issue コメント)で仕様が整理済みである",
-        "   どちらにも当てはまらなければ、内容が推測できそうでもリファインメントを行う。",
-        "",
-        "十分な場合(実装):",
+    implement_steps = [
         "3. このリポジトリで実装し、作業ブランチにコミットする。",
         "4. テストとリンタが通ることを確認する。",
         f"5. `git push -u origin {branch}` のうえ `gh pr create` で PR を作る。",
         "   PR 本文には「判断ポイント」節を設け、低影響の判断とその理由を記載する。",
         '6. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
         f'   issue パラメータには "{issue.ref}"、PR を作成した場合は pr_url も渡す。',
-        "",
-        "不十分な場合(リファインメント):",
+    ]
+    refine_steps = [
         "3. コードベースを調査し、仕様案・実装方針・判断ポイントを整理する。",
         f"4. 整理した内容を `gh issue comment {issue.url}` で Issue に投稿する。",
         "5. 人間の判断が必要な点は ask_human MCP ツールで質問する。",
         '6. 実装は行わず、report_result MCP ツール(outcome="refined")で報告して終了する。',
-        "   次のセッションがリファインメント結果を前提に実装する。",
+    ]
+    lines = [
+        "あなたは GitHub Issue を自律的に処理するエージェントである。",
         "",
-        "どちらの場合も、セッションの終了前に必ず report_result を 1 回呼ぶ。",
+        f"対象 Issue: {issue.url}",
+        f"作業ブランチ: {branch}(すでにチェックアウト済み)",
+    ]
+    if issue.note:
+        lines += ["", "登録者からの補足(要件の一部として扱う):"]
+        lines += [f"  {line}" for line in issue.note.splitlines()]
+    lines += [
+        "",
+        "手順:",
+        f"1. `gh issue view {issue.url} --comments` で Issue とコメントを読み、要件を把握する。",
+    ]
+    if issue.mode == registry.MODE_IMPLEMENT:
+        lines += [
+            "2. この Issue は実装を指定して登録されている。リファインメントは行わず、",
+            "   Issue・コメント・上記の補足から要件を確定して実装に進む。",
+            *implement_steps,
+        ]
+    elif issue.mode == registry.MODE_REFINE:
+        lines += [
+            "2. この Issue はリファインメントを指定して登録されている。実装は行わない。",
+            *refine_steps,
+        ]
+    else:
+        lines += [
+            "2. Issue が実装に着手できる程度に具体化されているか判断する。",
+            "   実装に進んでよいのは次のいずれかの場合だけである。",
+            "   - Issue 本文に受け入れ条件(完了条件)と対象範囲が明文化されている",
+            "   - 過去のリファインメント(下記の実施記録や Issue コメント)で仕様が整理済みである",
+            "   どちらにも当てはまらなければ、内容が推測できそうでもリファインメントを行う。",
+            "",
+            "十分な場合(実装):",
+            *implement_steps,
+            "",
+            "不十分な場合(リファインメント):",
+            *refine_steps,
+            "   次のセッションがリファインメント結果を前提に実装する。",
+        ]
+    lines += [
+        "",
+        "セッションの終了前に必ず report_result を 1 回呼ぶ。",
         "何もする必要がなかった場合(実装済みの PR がすでにある、など)も、",
         'その旨を summary にして report_result(outcome="implemented")で報告する。',
         "",
@@ -192,7 +222,11 @@ def build_prompt(
         "質問を登録したら回答を待たず、そこまでの実施内容を report_result で報告して"
         "即座に終了する。",
     ]
-    if branch_template is not None and settings.has_session_placeholders(branch_template):
+    if (
+        branch_template is not None
+        and settings.has_session_placeholders(branch_template)
+        and issue.mode != registry.MODE_REFINE  # リファインメントのみなら push しない
+    ):
         lines += [
             "",
             "ブランチ名について:",
@@ -293,7 +327,8 @@ def process_issue(
     ブランチ名は初回はテンプレート(settings)から作り、
     再開時は前回のブランチをそのまま使う。
     セッションがリファインメントだけで終えた(outcome="refined"の報告)場合は
-    queued に戻し、次のセッションが実装する。
+    queued に戻し、次のセッションが実装する。ただし mode=refine の Issue は
+    リファインメントが最終成果なので done にする。
     report_result を呼ばずに終了した場合は途中死とみなして 1 回だけ queued に戻し、
     それでも連続したら failed にする。
     """
@@ -347,9 +382,13 @@ def process_issue(
     ]
     if run_reports:
         control.clear_missing_report_requeued(conn, issue.ref)
-    requeue_reported = any(
-        r.outcome in (reports.OUTCOME_REFINED, reports.OUTCOME_ABORTED) for r in run_reports
+    # refine 指定の Issue はリファインメント完了が最終成果なので requeue しない
+    requeue_outcomes = (
+        (reports.OUTCOME_ABORTED,)
+        if issue.mode == registry.MODE_REFINE
+        else (reports.OUTCOME_REFINED, reports.OUTCOME_ABORTED)
     )
+    requeue_reported = any(r.outcome in requeue_outcomes for r in run_reports)
     # stop 指示を受けたのに報告なしで終わった場合は中断とみなして queued に戻す
     # (報告があるならその outcome を信頼する)
     stop_at = control.stop_instructed_at(conn, issue.ref)

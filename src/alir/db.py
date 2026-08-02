@@ -93,7 +93,9 @@ CREATE TABLE issues (
     branch TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    title TEXT
+    title TEXT,
+    mode TEXT,
+    note TEXT
 )
 """,
 }
@@ -103,6 +105,8 @@ def _migrate(conn: iceql.Connection) -> None:
     """既存 DB への後方互換の列追加。"""
     additions = (
         ("issues", "title", "ALTER TABLE issues ADD COLUMN title TEXT"),
+        ("issues", "mode", "ALTER TABLE issues ADD COLUMN mode TEXT"),
+        ("issues", "note", "ALTER TABLE issues ADD COLUMN note TEXT"),
         ("reports", "outcome", "ALTER TABLE reports ADD COLUMN outcome TEXT"),
     )
     for table, column, ddl in additions:

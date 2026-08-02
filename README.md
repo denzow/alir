@@ -15,6 +15,9 @@ See [plan.md](plan.md) for the overall design (Japanese).
 ```console
 # Register issues to work on (the title is fetched via gh)
 $ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo
+# Optionally pick the work mode (auto / implement / refine) and add a note for the prompt
+$ alir issues add https://github.com/owner/repo/issues/13 --workdir ~/work/repo \
+    --mode refine --note "limit the change to the API layer"
 $ alir issues                       # list
 $ alir issues import --label agent-ready --workdir ~/work/repo   # bulk import by label (helper)
 

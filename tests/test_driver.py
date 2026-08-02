@@ -380,6 +380,59 @@ def test_prompt_instructs_stop_on_usage(dbdir: Path) -> None:
     assert 'outcome="aborted"' in prompt
 
 
+def test_prompt_includes_note(dbdir: Path) -> None:
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir="/tmp/alir", note="対象は API 層だけにする")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, 1, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "登録者からの補足" in prompt
+    assert "対象は API 層だけにする" in prompt
+
+
+def test_prompt_for_implement_mode_skips_refinement(dbdir: Path) -> None:
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir="/tmp/alir", mode=registry.MODE_IMPLEMENT)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, 1, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "実装を指定して登録されている" in prompt
+    assert "gh pr create" in prompt
+    assert "不十分な場合(リファインメント)" not in prompt
+    assert 'outcome="refined"' not in prompt
+
+
+def test_prompt_for_refine_mode_skips_implementation(dbdir: Path) -> None:
+    from alir import settings
+
+    conn = db.connect(dbdir)
+    settings.set_branch_template(conn, "{number}/{type}/{summary}")
+    registry.add(conn, url=URL, workdir="/tmp/alir", mode=registry.MODE_REFINE)
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, 1, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "リファインメントを指定して登録されている" in prompt
+    assert 'outcome="refined"' in prompt
+    assert "gh pr create" not in prompt
+    # 実装しないのでブランチ改名の指示も出さない
+    assert "git branch -m" not in prompt
+
+
+def test_refine_mode_completes_on_refined_report(dbdir: Path) -> None:
+    """mode=refine の Issue は refined 報告で requeue せず done になる。"""
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir="/tmp/alir", mode=registry.MODE_REFINE)
+
+    runner = _reporting_runner(
+        RunResult(exit_code=0, session_id=None, output="ok"), outcome="refined"
+    )
+    finished = driver.process_issue(dbdir, 1, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_DONE
+
+
 def test_prompt_warns_against_background_wait(dbdir: Path) -> None:
     """バックグラウンド完了待ちで応答を終えるとセッションごと死ぬことを明記する。"""
     issue = _add_issue(dbdir)
