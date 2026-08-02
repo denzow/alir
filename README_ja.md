@@ -25,6 +25,9 @@ $ alir issues targets add --label agent-ready --workdir ~/work/repo  # ラベル
 # 直接 push 運用: このリポジトリでは PR を作らず develop に push して開発を続ける
 $ alir push-branch set --workdir ~/work/repo --branch develop
 
+# park からの再開での claude -p --resume 利用を切り替える(既定は有効)
+$ alir resume disable
+
 # ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 

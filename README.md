@@ -25,6 +25,9 @@ $ alir issues targets add --label agent-ready --workdir ~/work/repo  # auto-impo
 # Direct-push mode: skip PRs for this repository and keep pushing to develop
 $ alir push-branch set --workdir ~/work/repo --branch develop
 
+# Toggle claude -p --resume when resuming answered parked issues (enabled by default)
+$ alir resume disable
+
 # Start everything in one process: loop driver + Web UI + MCP (HTTP)
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 

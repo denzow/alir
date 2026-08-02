@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from alir import db, driver, questions, registry, resume
+from alir import control, db, driver, questions, registry, resume
 from alir.driver import RunResult
 
 URL = "https://github.com/denzow/alir/issues/12"
@@ -93,6 +93,60 @@ def test_requeue_after_expire(dbdir: Path) -> None:
     resume.expire_timeouts(conn, timeout=timedelta(hours=12), now=future)
     requeued = resume.requeue_answered(conn)
     assert [i.id for i in requeued] == [issue.id]
+
+
+def test_requeue_answered_marks_resume_session(dbdir: Path) -> None:
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    registry.set_status(conn, issue.id, registry.STATUS_PARKED, session_id="sess-park")
+    q = _ask(conn)
+    questions.answer(conn, q.id, "1")
+    resume.requeue_answered(conn)
+    assert control.resume_session(conn, REF) == "sess-park"
+
+
+def test_requeue_answered_without_session_id_marks_nothing(dbdir: Path) -> None:
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    registry.set_status(conn, issue.id, registry.STATUS_PARKED)
+    q = _ask(conn)
+    questions.answer(conn, q.id, "1")
+    resume.requeue_answered(conn)
+    assert control.resume_session(conn, REF) is None
+
+
+def test_run_loop_resumes_answered_parked_with_session(dbdir: Path) -> None:
+    """回答済み parked の再開では前回セッションの --resume 用 ID が runner に渡る。"""
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    registry.set_status(conn, issue.id, registry.STATUS_PARKED, session_id="sess-park")
+    q = _ask(conn)
+    questions.answer(conn, q.id, "2")
+
+    resumed: list[str | None] = []
+
+    def runner(
+        *,
+        prompt: str,
+        cwd: Path,
+        dbdir: Path,
+        skip_permissions: bool = False,
+        resume_session_id: str | None = None,
+    ) -> RunResult:
+        from alir import reports
+
+        resumed.append(resume_session_id)
+        conn = db.connect(dbdir)
+        reports.add(conn, issue=REF, summary="実装済み", outcome="implemented")
+        return RunResult(exit_code=0, session_id="sess-park", output="ok")
+
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
+        return Path("/tmp/wt")
+
+    driver.run_loop(dbdir, once=True, runner=runner, worktree=worktree, log=lambda _: None)
+    conn = db.connect(dbdir)
+    assert registry.get(conn, issue.id).status == registry.STATUS_DONE
+    assert resumed == ["sess-park"]
 
 
 def test_run_loop_requeues_and_processes_answered_parked(dbdir: Path) -> None:

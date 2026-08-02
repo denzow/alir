@@ -20,6 +20,9 @@ DEFAULT_BRANCH_TEMPLATE = "alir/issue-{number}"
 # 直接 push 運用(PR を作らず push 先ブランチで開発を続ける)の workdir -> ブランチ名
 KEY_PUSH_BRANCHES = "push_branches"
 
+# park からの再開で claude -p --resume を使うかどうか("0" で無効)
+KEY_RESUME_ENABLED = "resume_enabled"
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -81,6 +84,16 @@ def validate_branch_name(branch: str) -> None:
         or branch.endswith(".lock")
     ):
         raise SettingsError(f"invalid branch name: {branch}")
+
+
+def resume_enabled(conn: iceql.Connection) -> bool:
+    """park からの再開で --resume を使うかどうか。未設定なら有効。"""
+    return control.get_value(conn, KEY_RESUME_ENABLED) != "0"
+
+
+def set_resume_enabled(conn: iceql.Connection, enabled: bool) -> None:
+    """park からの再開で --resume を使うかどうかを設定する(挙動の切り分け用)。"""
+    control.set_value(conn, KEY_RESUME_ENABLED, "1" if enabled else "0")
 
 
 def push_branches(conn: iceql.Connection) -> dict[str, str]:

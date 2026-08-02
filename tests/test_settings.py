@@ -61,6 +61,17 @@ def test_has_session_placeholders() -> None:
     assert settings.has_session_placeholders("alir/issue-{number}") is False
 
 
+def test_resume_enabled_default_true(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.resume_enabled(conn) is True
+
+
+def test_set_resume_enabled_roundtrip(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_resume_enabled(conn, False)
+    assert settings.resume_enabled(conn) is False
+    settings.set_resume_enabled(conn, True)
+    assert settings.resume_enabled(conn) is True
+
+
 def test_push_branches_default_empty(conn) -> None:  # type: ignore[no-untyped-def]
     assert settings.push_branches(conn) == {}
     assert settings.push_branch(conn, "/tmp/none") is None
