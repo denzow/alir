@@ -43,6 +43,10 @@ class ImportTarget:
 class ImportOutcome:
     imported: list[Issue]
     errors: list[str]
+    # 稼働ログ用の実行サマリ。checked は検索した対象数、found は見つかった
+    # Issue の総数(登録済みでスキップしたものも含む)。
+    checked: int = 0
+    found: int = 0
 
 
 def list_targets(conn: iceql.Connection) -> list[ImportTarget]:
@@ -119,12 +123,14 @@ def run_import(conn: iceql.Connection, *, fetch: Fetch = fetch_labeled_issues) -
     known = {issue.url for issue in registry.list_issues(conn)}
     imported: list[Issue] = []
     errors: list[str] = []
+    found = 0
     for target in targets:
         try:
             items = fetch(target.workdir, target.label)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{target.label} ({target.workdir}): {exc}")
             continue
+        found += len(items)
         for item in items:
             url = item.get("url")
             if not url or url in known:
@@ -137,4 +143,4 @@ def run_import(conn: iceql.Connection, *, fetch: Fetch = fetch_labeled_issues) -
                 continue
             known.add(url)
             imported.append(issue)
-    return ImportOutcome(imported=imported, errors=errors)
+    return ImportOutcome(imported=imported, errors=errors, checked=len(targets), found=found)

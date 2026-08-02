@@ -88,6 +88,9 @@ def test_run_import_skips_registered_urls_in_any_status(conn, workdir: Path) -> 
     outcome = importer.run_import(conn, fetch=lambda wd, label: [{"url": URL, "title": "t"}])
     assert outcome.imported == []
     assert len(registry.list_issues(conn)) == 1
+    # スキップしても「検索して見つけた」ことはサマリに残る
+    assert outcome.checked == 1
+    assert outcome.found == 1
 
 
 def test_run_import_without_targets_does_not_fetch(conn) -> None:  # type: ignore[no-untyped-def]
@@ -97,6 +100,8 @@ def test_run_import_without_targets_does_not_fetch(conn) -> None:  # type: ignor
     outcome = importer.run_import(conn, fetch=fetch)
     assert outcome.imported == []
     assert outcome.errors == []
+    assert outcome.checked == 0
+    assert outcome.found == 0
 
 
 def test_run_import_collects_errors_and_continues(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]

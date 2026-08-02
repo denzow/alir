@@ -170,6 +170,9 @@ def test_run_loop_imports_labeled_issues_once_per_ttl(dbdir: Path, tmp_path: Pat
     assert calls == ["alir"]
     assert any(m.startswith("import #1") for m in logs)
     assert any("import #1" in e.message for e in control.recent_events(conn))
+    # 稼働ログはコンソールにのみ出し、events には残さない
+    assert any(m == "import check: 1 target(s), found 1, imported 1" for m in logs)
+    assert not any("import check" in e.message for e in control.recent_events(conn))
 
 
 def test_run_loop_emits_import_errors(dbdir: Path, tmp_path: Path) -> None:

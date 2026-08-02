@@ -619,6 +619,8 @@ def run_loop(
     取り込み対象(importer)が設定されていれば、import_interval 秒ごとに
     ラベル付き Issue を検索してキュー末尾へ登録する。一時停止中も取り込みは
     続ける(セッションを開始しないだけで、キューへの登録は無害なため)。
+    実行のたびに確認結果(対象数・発見数・登録数)をログへ 1 行出し、
+    新規ゼロでも稼働していることを確認できるようにする。
 
     pr_status_fetch(通常は ci.fetch_pr_status)を渡すと、done の Issue の
     PR を ci_check_ttl 秒間隔で確認し、CI が失敗していれば queued に戻す。
@@ -678,6 +680,13 @@ def run_loop(
             if time.monotonic() >= next_import:
                 next_import = time.monotonic() + import_interval
                 outcome = importer.run_import(conn, fetch=import_fetch)
+                if outcome.checked:
+                    # 稼働確認用。新規ゼロの周回も 1 行残す。events には
+                    # 残さない(5 分ごとの定期実行で埋まるのを避ける)。
+                    log(
+                        f"import check: {outcome.checked} target(s), "
+                        f"found {outcome.found}, imported {len(outcome.imported)}"
+                    )
                 for imported in outcome.imported:
                     emit(f"import #{imported.id} {imported.ref}")
                 for error in outcome.errors:
