@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from alir import ci, control, db, questions, registry, reports, resume, settings, usage
+from alir import ci, control, db, importer, questions, registry, reports, resume, settings, usage
 from alir.registry import Issue
 
 BACKOFF_INITIAL = 60.0
@@ -383,6 +383,8 @@ def run_loop(
     usage_probe: Callable[[], usage.UsageStatus | None] | None = None,
     usage_check_ttl: float = 300.0,
     usage_threshold: float | None = None,
+    import_interval: float = importer.DEFAULT_INTERVAL,
+    import_fetch: importer.Fetch = importer.fetch_labeled_issues,
     pr_status_fetch: ci.PrStatusFetch | None = None,
     ci_check_ttl: float = 300.0,
     log: Callable[[str], None] = print,
@@ -398,6 +400,10 @@ def run_loop(
     以後 usage_check_ttl 秒キャッシュされる。セッションが完了するたびに
     キャッシュを破棄し、次の開始前に必ず新しい使用率で判定する。
     イベントは events テーブルにも記録し、Web UI から参照できるようにする。
+
+    取り込み対象(importer)が設定されていれば、import_interval 秒ごとに
+    ラベル付き Issue を検索してキュー末尾へ登録する。一時停止中も取り込みは
+    続ける(セッションを開始しないだけで、キューへの登録は無害なため)。
 
     pr_status_fetch(通常は ci.fetch_pr_status)を渡すと、done の Issue の
     PR を ci_check_ttl 秒間隔で確認し、CI が失敗していれば queued に戻す。
@@ -423,6 +429,7 @@ def run_loop(
     last_pause_reason: str | None = None
     probe_status: usage.UsageStatus | None = None
     next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
+    next_import = 0.0  # 自動取り込みの次回実行時刻(monotonic)
     next_ci_check = 0.0
     resolved_prs: set[str] = set()  # マージ済み・クローズ済みで監視を終えた PR
     if usage_threshold is not None:
@@ -442,6 +449,14 @@ def run_loop(
                 emit(f"question #{q.id} expired: proceeding with recommended")
             for requeued in resume.requeue_answered(conn):
                 emit(f"requeue #{requeued.id} {requeued.ref}")
+
+            if time.monotonic() >= next_import:
+                next_import = time.monotonic() + import_interval
+                outcome = importer.run_import(conn, fetch=import_fetch)
+                for imported in outcome.imported:
+                    emit(f"import #{imported.id} {imported.ref}")
+                for error in outcome.errors:
+                    emit(f"import error: {error}")
 
             if pr_status_fetch is not None and time.monotonic() >= next_ci_check:
                 next_ci_check = time.monotonic() + ci_check_ttl

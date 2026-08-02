@@ -17,6 +17,7 @@ See [plan.md](plan.md) for the overall design (Japanese).
 $ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo
 $ alir issues                       # list
 $ alir issues import --label agent-ready --workdir ~/work/repo   # bulk import by label (helper)
+$ alir issues targets add --label agent-ready --workdir ~/work/repo  # auto-import issues with this label
 
 # Start everything in one process: loop driver + Web UI + MCP (HTTP)
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000

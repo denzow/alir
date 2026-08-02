@@ -64,3 +64,41 @@ def test_answer_unknown_id_fails(dbdir: Path) -> None:
     result = CliRunner().invoke(main, ["answer", "99", "1"])
     assert result.exit_code != 0
     assert "not found" in result.output
+
+
+def test_issues_targets_add_list_remove(dbdir: Path, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["issues", "targets"])
+    assert result.exit_code == 0
+    assert "no targets" in result.output
+
+    result = runner.invoke(
+        main, ["issues", "targets", "add", "--label", "alir", "--workdir", str(workdir)]
+    )
+    assert result.exit_code == 0
+    assert "added: alir" in result.output
+
+    result = runner.invoke(main, ["issues", "targets"])
+    assert f"alir ({workdir.resolve()})" in result.output
+
+    result = runner.invoke(
+        main, ["issues", "targets", "remove", "--label", "alir", "--workdir", str(workdir)]
+    )
+    assert result.exit_code == 0
+
+    result = runner.invoke(main, ["issues", "targets"])
+    assert "no targets" in result.output
+
+
+def test_issues_targets_add_duplicate_fails(dbdir: Path, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    runner = CliRunner()
+    args = ["issues", "targets", "add", "--label", "alir", "--workdir", str(workdir)]
+    runner.invoke(main, args)
+    result = runner.invoke(main, args)
+    assert result.exit_code != 0
+    assert "already registered" in result.output

@@ -17,6 +17,7 @@ Claude Code が作業中に人間の判断が必要になったとき、質問�
 $ alir issues add https://github.com/owner/repo/issues/12 --workdir ~/work/repo
 $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
+$ alir issues targets add --label agent-ready --workdir ~/work/repo  # ラベルの自動取り込み対象に登録
 
 # ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000

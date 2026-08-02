@@ -18,7 +18,8 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from alir import control, db, progress, questions, registry, reports, settings
+from alir import control, db, importer, progress, questions, registry, reports, settings
+from alir.importer import ImporterError
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
 from alir.settings import SettingsError
@@ -290,15 +291,35 @@ async def sessions_index(request: Request) -> Response:
     return _render(request, "sessions.html", context, fragment="_session_list.html")
 
 
+def _settings_context(dbdir: Path) -> dict[str, Any]:
+    conn = db.connect(dbdir)
+    return {
+        "branch_template": settings.branch_template(conn),
+        "import_targets": importer.list_targets(conn),
+        "workdirs": registry.list_workdirs(conn),
+    }
+
+
+async def _settings_result(
+    request: Request, dbdir: Path, error: str | None, *, saved: bool = False
+) -> Response:
+    """settings への POST の結果を返す。htmx ならフォーム断片、通常はリダイレクト。"""
+    if _is_htmx(request):
+        context = await db.run_in_thread(lambda: _settings_context(dbdir))
+        context["saved"] = saved and error is None
+        context["error"] = error
+        return _render(request, "_settings_form.html", context, fragment="_settings_form.html")
+    if error:
+        return RedirectResponse(f"/settings?error={quote(error)}", 303)
+    return RedirectResponse("/settings", 303)
+
+
 @router.get("/settings")
 async def settings_index(request: Request) -> Response:
     dbdir = request.app.state.dbdir
-    template = await db.run_in_thread(lambda: settings.branch_template(db.connect(dbdir)))
-    context = {
-        "branch_template": template,
-        "saved": False,
-        "error": request.query_params.get("error"),
-    }
+    context = await db.run_in_thread(lambda: _settings_context(dbdir))
+    context["saved"] = False
+    context["error"] = request.query_params.get("error")
     return _render(request, "settings.html", context, fragment="_settings_form.html")
 
 
@@ -313,14 +334,41 @@ async def settings_save(request: Request) -> Response:
         await db.run_in_thread(lambda: settings.set_branch_template(db.connect(dbdir), template))
     except SettingsError as exc:
         error = str(exc)
+    return await _settings_result(request, dbdir, error, saved=True)
 
-    current = await db.run_in_thread(lambda: settings.branch_template(db.connect(dbdir)))
-    if _is_htmx(request):
-        context = {"branch_template": current, "saved": error is None, "error": error}
-        return _render(request, "_settings_form.html", context, fragment="_settings_form.html")
-    if error:
-        return RedirectResponse(f"/settings?error={quote(error)}", 303)
-    return RedirectResponse("/settings", 303)
+
+@router.post("/settings/targets/add")
+async def settings_targets_add(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    label = str(form.get("label") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: importer.add_target(db.connect(dbdir), workdir=workdir, label=label)
+        )
+    except ImporterError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/targets/remove")
+async def settings_targets_remove(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    label = str(form.get("label") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: importer.remove_target(db.connect(dbdir), workdir=workdir, label=label)
+        )
+    except ImporterError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
 
 
 async def _loop_context(dbdir: Path) -> dict[str, Any]:

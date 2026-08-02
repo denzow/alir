@@ -8,8 +8,9 @@ from pathlib import Path
 import click
 
 import alir
-from alir import db, questions, registry, usage
+from alir import db, importer, questions, registry, usage
 from alir.config import data_dir
+from alir.importer import ImporterError
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
 
@@ -115,21 +116,12 @@ def issues_add(url: str, workdir: Path) -> None:
 )
 def issues_import(label: str, workdir: Path) -> None:
     """gh CLI でラベル付き Issue を検索して一括登録する(補助コマンド)。"""
-    import subprocess
-
-    proc = subprocess.run(
-        ["gh", "issue", "list", "--label", label, "--json", "url,title", "--limit", "100"],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise click.ClickException(f"gh issue list failed: {proc.stderr.strip()}")
-    import json
-
+    try:
+        items = importer.fetch_labeled_issues(str(workdir), label)
+    except ImporterError as exc:
+        raise click.ClickException(str(exc)) from exc
     conn = db.connect(data_dir())
-    for item in json.loads(proc.stdout):
+    for item in items:
         try:
             issue = registry.add(
                 conn, url=item["url"], workdir=str(workdir.resolve()), title=item.get("title")
@@ -137,6 +129,56 @@ def issues_import(label: str, workdir: Path) -> None:
             click.echo(f"added #{issue.id}: {issue.ref}")
         except RegistryError as exc:
             click.echo(f"skipped: {exc}")
+
+
+@issues_group.group("targets", invoke_without_command=True)
+@click.pass_context
+def issues_targets(ctx: click.Context) -> None:
+    """自動取り込みの対象を操作する。サブコマンドなしなら一覧する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        items = importer.list_targets(conn)
+        if not items:
+            click.echo("no targets")
+            return
+        for target in items:
+            click.echo(f"{target.label} ({target.workdir})")
+
+
+@issues_targets.command("add")
+@click.option("--label", required=True, help="取り込む Issue のラベル")
+@click.option(
+    "--workdir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="対象リポジトリのローカルパス",
+)
+def targets_add(label: str, workdir: Path) -> None:
+    """自動取り込みの対象(workdir + ラベル)を追加する。"""
+    conn = db.connect(data_dir())
+    try:
+        target = importer.add_target(conn, workdir=str(workdir), label=label)
+    except ImporterError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"added: {target.label} ({target.workdir})")
+
+
+@issues_targets.command("remove")
+@click.option("--label", required=True, help="取り込む Issue のラベル")
+@click.option(
+    "--workdir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=".",
+    help="対象リポジトリのローカルパス",
+)
+def targets_remove(label: str, workdir: Path) -> None:
+    """自動取り込みの対象を削除する。"""
+    conn = db.connect(data_dir())
+    try:
+        importer.remove_target(conn, workdir=str(workdir), label=label)
+    except ImporterError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"removed: {label} ({workdir})")
 
 
 def _run_options(f: Callable[..., None]) -> Callable[..., None]:
@@ -188,6 +230,13 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
             help="claude -p /usage による公式使用率の確認を無効にする",
         ),
         click.option(
+            "--import-interval",
+            default=importer.DEFAULT_INTERVAL,
+            show_default=True,
+            type=float,
+            help="ラベル付き Issue の自動取り込みの実行間隔秒数",
+        ),
+        click.option(
             "--no-ci-check",
             is_flag=True,
             help="done の Issue の PR の CI 確認(失敗時の再キュー)を無効にする",
@@ -221,6 +270,7 @@ def run_cmd(
     weekly_budget: int | None,
     budget_threshold: float,
     no_usage_check: bool,
+    import_interval: float,
     no_ci_check: bool,
 ) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
@@ -238,6 +288,7 @@ def run_cmd(
         budget=_build_budget(session_budget, weekly_budget, budget_threshold),
         usage_probe=None if no_usage_check else usage.fetch_usage_status,
         usage_threshold=budget_threshold,
+        import_interval=import_interval,
         pr_status_fetch=None if no_ci_check else ci.fetch_pr_status,
     )
 
@@ -257,6 +308,7 @@ def serve_cmd(
     weekly_budget: int | None,
     budget_threshold: float,
     no_usage_check: bool,
+    import_interval: float,
     no_ci_check: bool,
 ) -> None:
     """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
@@ -287,6 +339,7 @@ def serve_cmd(
             "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
             "usage_probe": None if no_usage_check else usage.fetch_usage_status,
             "usage_threshold": budget_threshold,
+            "import_interval": import_interval,
             "pr_status_fetch": None if no_ci_check else ci.fetch_pr_status,
             "runner": runner,
         },
