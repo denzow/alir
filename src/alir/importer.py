@@ -43,8 +43,9 @@ class ImportTarget:
 class ImportOutcome:
     imported: list[Issue]
     errors: list[str]
-    # 稼働ログ用の実行サマリ。checked は検索した対象数、found は見つかった
-    # Issue の総数(登録済みでスキップしたものも含む)。
+    # 稼働ログ用の実行サマリ。checked は検索を試みた対象数(fetch が失敗した
+    # 対象も含む)、found は fetch が返した Issue の延べ数(登録済みなどで
+    # スキップしたものも含む)。
     checked: int = 0
     found: int = 0
 

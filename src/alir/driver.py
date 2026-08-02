@@ -684,7 +684,7 @@ def run_loop(
                     # 稼働確認用。新規ゼロの周回も 1 行残す。events には
                     # 残さない(5 分ごとの定期実行で埋まるのを避ける)。
                     log(
-                        f"import check: {outcome.checked} target(s), "
+                        f"import check: {outcome.checked} targets, "
                         f"found {outcome.found}, imported {len(outcome.imported)}"
                     )
                 for imported in outcome.imported:
