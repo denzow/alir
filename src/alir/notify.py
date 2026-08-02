@@ -19,7 +19,7 @@ import urllib.request
 
 import iceql
 
-from alir import config, db, settings
+from alir import config, control, db, settings
 from alir.questions import Question
 from alir.registry import Issue
 
@@ -73,15 +73,27 @@ def pushover_source(conn: iceql.Connection | None = None) -> str | None:
 
 
 def web_url(conn: iceql.Connection | None = None) -> str | None:
-    """通知に含める Web UI の URL を settings、なければ環境変数から読む。"""
-    # settings の読み取り失敗(データディレクトリ未作成など)は環境変数で継続する
+    """通知に含める Web UI の URL を返す。
+
+    settings(alir web-url set)、環境変数(ALIR_WEB_URL)、serve が起動時に
+    自動検出して記録した URL の順で読む。どれもなければ None。
+    """
+    # settings の読み取り失敗(データディレクトリ未作成など)は次の段に落ちる
     with contextlib.suppress(Exception):
         if conn is None:
             conn = db.connect(config.data_dir())
-        url = settings.web_url(conn)
-        if url is not None:
-            return url
-    return os.environ.get(ENV_WEB_URL) or None
+    if conn is not None:
+        with contextlib.suppress(Exception):
+            url = settings.web_url(conn)
+            if url is not None:
+                return url
+    env = os.environ.get(ENV_WEB_URL)
+    if env:
+        return env
+    if conn is not None:
+        with contextlib.suppress(Exception):
+            return control.get_value(conn, control.KEY_WEB_URL_AUTO) or None
+    return None
 
 
 def send_pushover(message: str, *, url: str | None) -> bool:

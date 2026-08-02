@@ -540,10 +540,13 @@ def serve_cmd(
 
     import uvicorn
 
-    from alir import ci, driver
+    from alir import ci, driver, web
     from alir.serve import create_combined_app
 
     dbdir = data_dir()
+    auto_url = web.record_auto_web_url(dbdir, host, port)
+    if auto_url:
+        click.echo(f"web ui: {auto_url}")
     app = create_combined_app(dbdir)
     runner = functools.partial(driver.run_claude, mcp_url=f"http://127.0.0.1:{port}/mcp")
     thread = threading.Thread(
@@ -574,6 +577,10 @@ def web_cmd(host: str, port: int) -> None:
     """回答用の Web UI を起動する(LAN 内のスマホからのアクセスを想定)。"""
     import uvicorn
 
-    from alir.web import create_app
+    from alir import web
 
-    uvicorn.run(create_app(data_dir()), host=host, port=port)
+    dbdir = data_dir()
+    auto_url = web.record_auto_web_url(dbdir, host, port)
+    if auto_url:
+        click.echo(f"web ui: {auto_url}")
+    uvicorn.run(web.create_app(dbdir), host=host, port=port)

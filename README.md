@@ -35,7 +35,8 @@ $ alir model set sonnet
 $ alir pushover set --token <api-token> --user <user-key>
 $ alir pushover test
 
-# Set the Web UI URL opened from notifications (use a LAN-reachable address)
+# The Web UI URL opened from notifications is auto-detected when serve starts.
+# Set it explicitly only when a different address should be used
 $ alir web-url set http://192.168.1.10:8710
 
 # Start everything in one process: loop driver + Web UI + MCP (HTTP)

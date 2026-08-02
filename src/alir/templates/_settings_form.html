@@ -142,6 +142,9 @@
       通知をタップしたときに開く、この Web UI の LAN 内 URL。
       {% if not web_url and web_url_env %}
       現在は環境変数 <code>ALIR_WEB_URL</code> の <code>{{ web_url_env }}</code> を使っている。
+      {% elif not web_url and web_url_auto %}
+      現在は起動時に自動検出した <code>{{ web_url_auto }}</code> を使っている。
+      違うアドレスで届く場合だけ設定すればよい。
       {% elif not web_url %}
       未設定の間は通知にリンクが付かない。
       {% endif %}

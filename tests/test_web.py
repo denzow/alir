@@ -798,3 +798,44 @@ def test_settings_pushover_test_uses_saved_web_url(
     res = client.post("/settings/pushover/test", headers={"HX-Request": "true"})
     assert "テスト通知を送信しました" in res.text
     assert urls == ["http://192.168.1.10:8710"]
+
+
+def test_record_auto_web_url_uses_specific_host(dbdir: Path) -> None:
+    from alir import control
+    from alir.web import record_auto_web_url
+
+    url = record_auto_web_url(dbdir, "192.168.1.20", 8710)
+    assert url == "http://192.168.1.20:8710"
+    assert control.get_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO) == url
+
+
+def test_record_auto_web_url_detects_for_wildcard(dbdir: Path) -> None:
+    from alir import control
+    from alir.web import record_auto_web_url
+
+    url = record_auto_web_url(dbdir, "0.0.0.0", 8710, detect=lambda: "192.168.1.30")
+    assert url == "http://192.168.1.30:8710"
+    assert control.get_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO) == url
+
+
+def test_record_auto_web_url_clears_when_undetectable(dbdir: Path) -> None:
+    from alir import control
+    from alir.web import record_auto_web_url
+
+    conn = db.connect(dbdir)
+    control.set_value(conn, control.KEY_WEB_URL_AUTO, "http://old:8710")
+    url = record_auto_web_url(dbdir, "0.0.0.0", 8710, detect=lambda: None)
+    assert url is None
+    assert control.get_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO) in (None, "")
+
+
+def test_settings_page_shows_auto_detected_web_url(
+    client: TestClient, dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import control, notify
+
+    monkeypatch.delenv(notify.ENV_WEB_URL, raising=False)
+    control.set_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO, "http://192.168.1.30:8710")
+    res = client.get("/settings")
+    assert "自動検出した" in res.text
+    assert "http://192.168.1.30:8710" in res.text

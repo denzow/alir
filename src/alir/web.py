@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,41 @@ def _localtime(value: str | datetime) -> str:
 templates.env.filters["localtime"] = _localtime
 
 router = APIRouter()
+
+
+def lan_ip() -> str | None:
+    """LAN 内から到達できそうなこのホストの IPv4 アドレスを推定する。
+
+    外向きの UDP ソケットに選ばれる送信元アドレスを使う(パケットは送らない)。
+    経路がない・loopback しか得られないときは None。
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 80))  # TEST-NET-1。経路の選択にだけ使う
+            ip = str(sock.getsockname()[0])
+    except OSError:
+        return None
+    return None if ip.startswith("127.") else ip
+
+
+def record_auto_web_url(
+    dbdir: Path, host: str, port: int, *, detect: Callable[[], str | None] = lan_ip
+) -> str | None:
+    """自動検出した Web UI の URL を control に記録し、その URL を返す。
+
+    serve / web の起動時に呼ぶ。通知(notify.web_url)は settings と環境変数が
+    どちらも未設定のときこの記録を使う。bind 先が特定のアドレスならそれを、
+    ワイルドカード(0.0.0.0 など)なら LAN 内 IP の推定値を使う。
+    検出できなければ記録を消し、古いアドレスを通知に載せない。
+    """
+    address = host if host not in ("0.0.0.0", "::", "") else detect()
+    conn = db.connect(dbdir)
+    if address is None:
+        control.set_value(conn, control.KEY_WEB_URL_AUTO, "")
+        return None
+    url = f"http://{address}:{port}"
+    control.set_value(conn, control.KEY_WEB_URL_AUTO, url)
+    return url
 
 
 def _is_htmx(request: Request) -> bool:
@@ -324,6 +361,7 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
         "pushover_status": notify.pushover_source(conn),
         "web_url": settings.web_url(conn),
         "web_url_env": os.environ.get(notify.ENV_WEB_URL),
+        "web_url_auto": control.get_value(conn, control.KEY_WEB_URL_AUTO) or None,
     }
 
 

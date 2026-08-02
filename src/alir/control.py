@@ -18,6 +18,8 @@ KEY_PAUSED = "paused"
 KEY_HEARTBEAT = "heartbeat_at"
 KEY_USAGE_STATUS = "usage_status"
 KEY_USAGE_THRESHOLD = "usage_threshold"
+# serve / web が起動時に自動検出して記録する Web UI の URL(運用者の設定ではない)
+KEY_WEB_URL_AUTO = "web_url_auto"
 
 # events テーブルに残す直近件数。超えた分は登録時に削除する。
 MAX_EVENTS = 500

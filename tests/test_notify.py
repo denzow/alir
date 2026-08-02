@@ -109,3 +109,18 @@ def test_notify_message_includes_web_url(dbdir: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(notify, "send_desktop", lambda message: None)
     notify.notify_message("hello")
     assert sent == ["http://192.168.1.10:8710"]
+
+
+def test_web_url_falls_back_to_auto_detected(dbdir: Path) -> None:
+    from alir import control
+
+    control.set_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO, "http://10.0.0.5:8710")
+    assert notify.web_url() == "http://10.0.0.5:8710"
+
+
+def test_web_url_env_beats_auto_detected(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import control
+
+    control.set_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO, "http://10.0.0.5:8710")
+    monkeypatch.setenv(notify.ENV_WEB_URL, "http://env:8710")
+    assert notify.web_url() == "http://env:8710"
