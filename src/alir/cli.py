@@ -187,6 +187,11 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
             is_flag=True,
             help="claude -p /usage による公式使用率の確認を無効にする",
         ),
+        click.option(
+            "--no-ci-check",
+            is_flag=True,
+            help="done の Issue の PR の CI 確認(失敗時の再キュー)を無効にする",
+        ),
     ]
     for option in reversed(options):
         f = option(f)
@@ -216,11 +221,12 @@ def run_cmd(
     weekly_budget: int | None,
     budget_threshold: float,
     no_usage_check: bool,
+    no_ci_check: bool,
 ) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
     from datetime import timedelta
 
-    from alir import driver
+    from alir import ci, driver
 
     driver.run_loop(
         data_dir(),
@@ -232,6 +238,7 @@ def run_cmd(
         budget=_build_budget(session_budget, weekly_budget, budget_threshold),
         usage_probe=None if no_usage_check else usage.fetch_usage_status,
         usage_threshold=budget_threshold,
+        pr_status_fetch=None if no_ci_check else ci.fetch_pr_status,
     )
 
 
@@ -250,6 +257,7 @@ def serve_cmd(
     weekly_budget: int | None,
     budget_threshold: float,
     no_usage_check: bool,
+    no_ci_check: bool,
 ) -> None:
     """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
 
@@ -262,7 +270,7 @@ def serve_cmd(
 
     import uvicorn
 
-    from alir import driver
+    from alir import ci, driver
     from alir.serve import create_combined_app
 
     dbdir = data_dir()
@@ -279,6 +287,7 @@ def serve_cmd(
             "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
             "usage_probe": None if no_usage_check else usage.fetch_usage_status,
             "usage_threshold": budget_threshold,
+            "pr_status_fetch": None if no_ci_check else ci.fetch_pr_status,
             "runner": runner,
         },
         daemon=True,

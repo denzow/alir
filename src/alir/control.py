@@ -53,6 +53,12 @@ def get_value(conn: iceql.Connection, key: str) -> str | None:
     return None if row is None else str(row[0])
 
 
+def clear_value(conn: iceql.Connection, key: str) -> None:
+    """control テーブルの KV を削除する。未設定なら何もしない。"""
+    with db.transaction(conn):
+        conn.execute("DELETE FROM control WHERE key = ?", (key,))
+
+
 def set_paused(conn: iceql.Connection, paused: bool) -> None:
     """新規実行の一時停止フラグを設定する。"""
     set_value(conn, KEY_PAUSED, "1" if paused else "0")
