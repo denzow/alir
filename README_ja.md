@@ -22,6 +22,9 @@ $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
 $ alir issues targets add --label agent-ready --workdir ~/work/repo  # ラベルの自動取り込み対象に登録
 
+# 直接 push 運用: このリポジトリでは PR を作らず develop に push して開発を続ける
+$ alir push-branch set --workdir ~/work/repo --branch develop
+
 # ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 
@@ -31,6 +34,11 @@ $ alir questions
 # 質問に回答する（選択肢番号または自由記述）
 $ alir answer 1 2 "B案で。ただしテストを先に"
 ```
+
+`alir push-branch set` で登録したリポジトリは直接 push 運用になる。
+セッションは PR を作らず、push 先ブランチをチェックアウトした共有 worktree で作業して直接 push する。
+同じリポジトリのセッションは同時に 1 つしか動かない。
+push 先には workdir でチェックアウトしていないブランチを指定すること（チェックアウト中のブランチは git が worktree の作成を拒否する）。
 
 推奨は `alir serve` での起動。
 ドライバが起動する claude セッションは、セッションごとにサブプロセスを立てる代わりに `http://127.0.0.1:PORT/mcp` の MCP エンドポイントへ接続する。

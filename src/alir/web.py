@@ -305,6 +305,7 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
     return {
         "branch_template": settings.branch_template(conn),
         "import_targets": importer.list_targets(conn),
+        "push_branches": settings.push_branches(conn),
         "workdirs": registry.list_workdirs(conn),
     }
 
@@ -376,6 +377,39 @@ async def settings_targets_remove(request: Request) -> Response:
             lambda: importer.remove_target(db.connect(dbdir), workdir=workdir, label=label)
         )
     except ImporterError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/push-branches/set")
+async def settings_push_branches_set(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    branch = str(form.get("branch") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: settings.set_push_branch(db.connect(dbdir), workdir=workdir, branch=branch)
+        )
+    except SettingsError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/push-branches/unset")
+async def settings_push_branches_unset(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: settings.clear_push_branch(db.connect(dbdir), workdir=workdir)
+        )
+    except SettingsError as exc:
         error = str(exc)
     return await _settings_result(request, dbdir, error)
 

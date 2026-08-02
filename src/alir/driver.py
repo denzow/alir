@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import iceql
+
 from alir import ci, control, db, importer, questions, registry, reports, resume, settings, usage
 from alir.registry import Issue
 
@@ -48,7 +50,7 @@ class RunResult:
 
 
 Runner = Callable[..., RunResult]
-WorktreeSetup = Callable[[Issue, str], Path]
+WorktreeSetup = Callable[..., Path]
 
 
 def _git(workdir: Path, *args: str) -> str:
@@ -98,16 +100,61 @@ def _current_branch(path: Path) -> str | None:
     return proc.stdout.strip() or None
 
 
-def setup_worktree(issue: Issue, branch: str) -> Path:
+def _setup_push_worktree(workdir: Path, branch: str, root: Path) -> Path:
+    """push 先ブランチをチェックアウトした共有 worktree を用意する。
+
+    直接 push 運用では同じ workdir の全 Issue がこの worktree
+    (<repo>-alir/branch-<name>)で順番に作業する。再利用時は origin の
+    進みに追従する(fast-forward のみ。追従できなくても続行する)。
+    push 先ブランチが workdir 側でチェックアウト中だと git が worktree の
+    作成を拒否するので、専用のブランチを指定する運用を想定する。
+    """
+    path = root / f"branch-{branch.replace('/', '-')}"
+    if path.exists():
+        with contextlib.suppress(DriverError):
+            _git(path, "pull", "--ff-only", "origin", branch)
+        return path
+    root.mkdir(parents=True, exist_ok=True)
+    # fetch の失敗(オフライン・リモート未作成など)は致命的でないので続行する
+    with contextlib.suppress(DriverError):
+        _git(workdir, "fetch", "origin", branch)
+    if _git(workdir, "branch", "--list", branch).strip():
+        _git(workdir, "worktree", "add", str(path), branch)
+        with contextlib.suppress(DriverError):
+            _git(path, "pull", "--ff-only", "origin", branch)
+        return path
+    remote = subprocess.run(
+        ["git", "-C", str(workdir), "rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+        capture_output=True,
+        check=False,
+    )
+    if remote.returncode == 0:
+        _git(workdir, "worktree", "add", "-b", branch, str(path), f"origin/{branch}")
+        return path
+    # リモートにもまだないブランチはデフォルトブランチの先端から新設する
+    args = ["worktree", "add", "-b", branch, str(path)]
+    base = _default_branch_ref(workdir)
+    if base is not None:
+        args.append(base)
+    _git(workdir, *args)
+    return path
+
+
+def setup_worktree(issue: Issue, branch: str, *, push: bool = False) -> Path:
     """Issue 用の worktree と指定のブランチを用意し、worktree のパスを返す。
 
     worktree は対象リポジトリの隣(<repo>-alir/issue-<n>)に置く。
     すでに存在すればそのまま再利用する(park からの再開)。
     新しくブランチを切るときはデフォルトブランチ(main / master)を fetch で
     最新化し、その先端を基点にする。workdir のチェックアウトは変更しない。
+    push が真(直接 push 運用)のときは Issue ごとではなく push 先ブランチの
+    共有 worktree を使う。
     """
     workdir = Path(issue.workdir)
-    path = workdir.parent / f"{workdir.name}-alir" / f"issue-{issue.number}"
+    root = workdir.parent / f"{workdir.name}-alir"
+    if push:
+        return _setup_push_worktree(workdir, branch, root)
+    path = root / f"issue-{issue.number}"
     if path.exists():
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -135,6 +182,7 @@ def build_prompt(
     past_reports: list[reports.Report] | None = None,
     branch_template: str | None = None,
     ci_failed_pr: str | None = None,
+    direct_push: bool = False,
 ) -> str:
     """1 Issue を処理するセッションのプロンプトを組み立てる。
 
@@ -143,16 +191,27 @@ def build_prompt(
     issue.note(登録者の補足)があればプロンプトに含める。
     branch_template にセッションが決める変数({type} / {summary})が含まれる場合は、
     改名の指示を加える。ci_failed_pr があれば、その PR の CI が失敗している旨と
-    修正の指示を加える。
+    修正の指示を加える。direct_push が真なら PR を作らず作業ブランチへ直接
+    push する手順にする。
     """
-    implement_steps = [
-        "3. このリポジトリで実装し、作業ブランチにコミットする。",
-        "4. テストとリンタが通ることを確認する。",
-        f"5. `git push -u origin {branch}` のうえ `gh pr create` で PR を作る。",
-        "   PR 本文には「判断ポイント」節を設け、低影響の判断とその理由を記載する。",
-        '6. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
-        f'   issue パラメータには "{issue.ref}"、PR を作成した場合は pr_url も渡す。',
-    ]
+    if direct_push:
+        implement_steps = [
+            "3. このリポジトリで実装し、作業ブランチにコミットする。",
+            "4. テストとリンタが通ることを確認する。",
+            f"5. `git push origin {branch}` で作業ブランチへ直接 push する。PR は作らない。",
+            "   低影響の判断とその理由はコミットメッセージに記載する。",
+            '6. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
+            f'   issue パラメータには "{issue.ref}" を渡す。',
+        ]
+    else:
+        implement_steps = [
+            "3. このリポジトリで実装し、作業ブランチにコミットする。",
+            "4. テストとリンタが通ることを確認する。",
+            f"5. `git push -u origin {branch}` のうえ `gh pr create` で PR を作る。",
+            "   PR 本文には「判断ポイント」節を設け、低影響の判断とその理由を記載する。",
+            '6. report_result MCP ツール(outcome="implemented")で実施内容を 1 行で報告する。',
+            f'   issue パラメータには "{issue.ref}"、PR を作成した場合は pr_url も渡す。',
+        ]
     refine_steps = [
         "3. コードベースを調査し、仕様案・実装方針・判断ポイントを整理する。",
         f"4. 整理した内容を `gh issue comment {issue.url}` で Issue に投稿する。",
@@ -165,6 +224,12 @@ def build_prompt(
         f"対象 Issue: {issue.url}",
         f"作業ブランチ: {branch}(すでにチェックアウト済み)",
     ]
+    if direct_push:
+        lines += [
+            "",
+            f"このリポジトリは PR を作らず、{branch} ブランチに直接 push して",
+            "開発を続ける運用である。新しいブランチや PR は作らない。",
+        ]
     if ci_failed_pr is not None:
         lines += [
             "",
@@ -228,7 +293,8 @@ def build_prompt(
         "",
         "人間の判断が必要になったら ask_human MCP ツールで質問を登録する。",
         f'issue パラメータには "{issue.ref}" を渡す。',
-        "質問は不可逆または高影響の判断に限る。低影響の判断は推奨案で進めて PR に記載する。",
+        "質問は不可逆または高影響の判断に限る。低影響の判断は推奨案で進めて"
+        + ("コミットメッセージに記載する。" if direct_push else " PR に記載する。"),
         "質問を登録したら回答を待たず、そこまでの実施内容を report_result で報告して"
         "即座に終了する。",
         "",
@@ -341,7 +407,9 @@ def process_issue(
     """Issue を 1 件処理し、最終状態の Issue を返す。
 
     ブランチ名は初回はテンプレート(settings)から作り、
-    再開時は前回のブランチをそのまま使う。
+    再開時は前回のブランチをそのまま使う。workdir が直接 push 運用
+    (settings.push_branch)なら push 先ブランチをそのまま使い、PR を作らない
+    手順のプロンプトにする。
     セッションがリファインメントだけで終えた(outcome="refined"の報告)場合は
     queued に戻し、次のセッションが実装する。ただし mode=refine の Issue は
     リファインメントが最終成果なので done にする。
@@ -359,17 +427,22 @@ def process_issue(
     ]
     past_reports = reports.list_reports(conn, issue=issue.ref, limit=3)
     template = settings.branch_template(conn)
-    branch = issue.branch or settings.render_branch(template, issue)
+    push_branch = settings.push_branch(conn, issue.workdir)
+    if push_branch is not None:
+        branch = issue.branch or push_branch
+    else:
+        branch = issue.branch or settings.render_branch(template, issue)
     ci_failed_pr = ci.take_ci_failure(conn, issue.ref)
     try:
-        path = worktree(issue, branch)
+        path = worktree(issue, branch, push=push_branch is not None)
         prompt = build_prompt(
             issue,
             branch,
             answers=answered,
             past_reports=past_reports,
-            branch_template=None if issue.branch else template,
+            branch_template=None if (issue.branch or push_branch) else template,
             ci_failed_pr=ci_failed_pr,
+            direct_push=push_branch is not None,
         )
         result = runner(prompt=prompt, cwd=path, dbdir=dbdir, skip_permissions=skip_permissions)
     except Exception:
@@ -377,9 +450,11 @@ def process_issue(
         raise
 
     # セッションが git branch -m で改名した場合に備え、実際のブランチ名を取り込む
-    actual = _current_branch(path)
-    if actual:
-        branch = actual
+    # (直接 push 運用は push 先ブランチが固定なので取り込まない)
+    if push_branch is None:
+        actual = _current_branch(path)
+        if actual:
+            branch = actual
 
     conn = db.connect(dbdir)
     if result.usage:
@@ -435,6 +510,21 @@ def process_issue(
     else:
         status = registry.STATUS_DONE
     return registry.set_status(conn, iid, status, session_id=result.session_id, branch=branch)
+
+
+def next_startable(conn: iceql.Connection) -> Issue | None:
+    """次に開始できる queued の Issue を返す。なければ None。
+
+    直接 push 運用の workdir は push 先ブランチの worktree を全 Issue で
+    共有するため、同じ workdir の Issue が実行中の間は開始せず、
+    後続の別 workdir の Issue を先に開始する。
+    """
+    running = {i.workdir for i in registry.list_issues(conn, status=registry.STATUS_RUNNING)}
+    for issue in registry.list_issues(conn, status=registry.STATUS_QUEUED):
+        if issue.workdir in running and settings.push_branch(conn, issue.workdir) is not None:
+            continue
+        return issue
+    return None
 
 
 def run_loop(
@@ -565,7 +655,7 @@ def run_loop(
                 # 取得と running への遷移を原子的に行い、
                 # 別プロセスのドライバとの二重取得を防ぐ
                 with db.transaction(conn):
-                    issue = registry.next_queued(conn)
+                    issue = next_startable(conn)
                     if issue is not None:
                         registry.set_status(conn, issue.id, registry.STATUS_RUNNING)
                 if issue is None:

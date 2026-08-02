@@ -522,6 +522,63 @@ def test_settings_targets_remove(client: TestClient, dbdir: Path, tmp_path: Path
     assert importer.list_targets(db.connect(dbdir)) == []
 
 
+def test_settings_page_shows_push_branches(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import settings
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    settings.set_push_branch(db.connect(dbdir), workdir=str(workdir), branch="develop")
+    res = client.get("/settings")
+    assert "直接 push" in res.text
+    assert "develop" in res.text
+    assert str(workdir.resolve()) in res.text
+
+
+def test_settings_push_branches_set(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import settings
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/settings/push-branches/set",
+        data={"workdir": str(workdir), "branch": "develop"},
+        headers={"HX-Request": "true"},
+    )
+    assert res.status_code == 200
+    assert settings.push_branches(db.connect(dbdir)) == {str(workdir.resolve()): "develop"}
+
+
+def test_settings_push_branches_set_invalid_branch_shows_error(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    from alir import settings
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    res = client.post(
+        "/settings/push-branches/set",
+        data={"workdir": str(workdir), "branch": "bad..name"},
+        headers={"HX-Request": "true"},
+    )
+    assert "invalid branch name" in res.text
+    assert settings.push_branches(db.connect(dbdir)) == {}
+
+
+def test_settings_push_branches_unset(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import settings
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    settings.set_push_branch(db.connect(dbdir), workdir=str(workdir), branch="develop")
+    res = client.post(
+        "/settings/push-branches/unset",
+        data={"workdir": str(workdir.resolve())},
+        headers={"HX-Request": "true"},
+    )
+    assert res.status_code == 200
+    assert settings.push_branches(db.connect(dbdir)) == {}
+
+
 def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
     from alir import control
 

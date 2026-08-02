@@ -17,12 +17,12 @@ def dbdir(tmp_path: Path) -> Path:
     return tmp_path / "data"
 
 
-def _add_issue(dbdir: Path) -> registry.Issue:
+def _add_issue(dbdir: Path, workdir: str = "/tmp/alir") -> registry.Issue:
     conn = db.connect(dbdir)
-    return registry.add(conn, url=URL, workdir="/tmp/alir")
+    return registry.add(conn, url=URL, workdir=workdir)
 
 
-def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
+def _fake_worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
     return Path("/tmp/worktree")
 
 
@@ -92,7 +92,7 @@ def test_process_issue_parked_when_question_open(dbdir: Path) -> None:
 def test_process_issue_failed_when_worktree_setup_raises(dbdir: Path) -> None:
     issue = _add_issue(dbdir)
 
-    def broken_worktree(issue: registry.Issue, branch: str) -> Path:
+    def broken_worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
         raise driver.DriverError("no such repo")
 
     runner = _runner(RunResult(exit_code=0, session_id=None, output=""))
@@ -292,7 +292,7 @@ def test_process_issue_uses_branch_template(dbdir: Path) -> None:
 
     captured: dict[str, str] = {}
 
-    def worktree(issue: registry.Issue, branch: str) -> Path:
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
         captured["branch"] = branch
         return Path("/tmp/wt")
 
@@ -312,7 +312,7 @@ def test_process_issue_reuses_stored_branch(dbdir: Path) -> None:
 
     captured: dict[str, str] = {}
 
-    def worktree(issue: registry.Issue, branch: str) -> Path:
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
         captured["branch"] = branch
         return Path("/tmp/wt")
 
@@ -405,11 +405,138 @@ def test_process_issue_captures_renamed_branch(dbdir: Path, tmp_path: Path) -> N
         _run_git(cwd, "branch", "-m", "12/bugfix/fix-login")
         return RunResult(exit_code=0, session_id=None, output="ok")
 
-    def worktree(issue: registry.Issue, branch: str) -> Path:
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
         return repo
 
     finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
     assert finished.branch == "12/bugfix/fix-login"
+
+
+def test_process_issue_direct_push_uses_push_branch(dbdir: Path, tmp_path: Path) -> None:
+    """直接 push 運用の workdir では push 先ブランチで作業し、PR を作らない手順にする。"""
+    from alir import settings
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    issue = _add_issue(dbdir, workdir=str(work.resolve()))
+    conn = db.connect(dbdir)
+    settings.set_push_branch(conn, workdir=str(work), branch="develop")
+
+    captured: dict[str, object] = {}
+
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
+        captured["branch"] = branch
+        captured["push"] = push
+        return Path("/tmp/wt")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
+    assert captured == {"branch": "develop", "push": True}
+    assert finished.branch == "develop"
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "git push origin develop" in prompt
+    assert "PR は作らない" in prompt
+    assert "gh pr create" not in prompt
+
+
+def test_prompt_direct_push_omits_rename_instruction(dbdir: Path, tmp_path: Path) -> None:
+    """直接 push 運用ではテンプレートに {type} 等があってもブランチを改名させない。"""
+    from alir import settings
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    issue = _add_issue(dbdir, workdir=str(work.resolve()))
+    conn = db.connect(dbdir)
+    settings.set_branch_template(conn, "{number}/{type}/{summary}")
+    settings.set_push_branch(conn, workdir=str(work), branch="develop")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "git branch -m" not in prompt
+
+
+def test_setup_worktree_direct_push_shares_branch_worktree(tmp_path: Path) -> None:
+    """直接 push 運用は push 先ブランチの共有 worktree を使い、origin の先端に追従する。"""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run_git(seed, "init", "-b", "main")
+    (seed / "a.txt").write_text("1")
+    _run_git(seed, "add", ".")
+    _run_git(seed, "commit", "-m", "c1")
+    _run_git(seed, "branch", "develop")
+
+    origin = tmp_path / "origin.git"
+    _run_git(tmp_path, "clone", "--bare", str(seed), str(origin))
+
+    work = tmp_path / "repo"
+    _run_git(tmp_path, "clone", str(origin), str(work))
+
+    # clone 後に origin 側だけ develop を進める
+    _run_git(seed, "switch", "develop")
+    (seed / "a.txt").write_text("2")
+    _run_git(seed, "commit", "-am", "c2")
+    _run_git(seed, "push", str(origin), "develop")
+    latest = _run_git(seed, "rev-parse", "develop")
+
+    path = driver.setup_worktree(_make_issue(work), "develop", push=True)
+    assert path.name == "branch-develop"
+    assert _run_git(path, "branch", "--show-current") == "develop"
+    assert _run_git(path, "rev-parse", "HEAD") == latest
+
+    # 別の Issue でも同じ worktree を再利用し、origin の進みに追従する
+    (seed / "a.txt").write_text("3")
+    _run_git(seed, "commit", "-am", "c3")
+    _run_git(seed, "push", str(origin), "develop")
+    newest = _run_git(seed, "rev-parse", "develop")
+
+    again = driver.setup_worktree(_make_issue(work), "develop", push=True)
+    assert again == path
+    assert _run_git(path, "rev-parse", "HEAD") == newest
+
+
+def test_setup_worktree_direct_push_creates_missing_branch(tmp_path: Path) -> None:
+    """push 先ブランチがどこにもなければデフォルトブランチの先端から新設する。"""
+    work = tmp_path / "repo"
+    work.mkdir()
+    _run_git(work, "init", "-b", "main")
+    (work / "a.txt").write_text("1")
+    _run_git(work, "add", ".")
+    _run_git(work, "commit", "-m", "c1")
+    main_rev = _run_git(work, "rev-parse", "main")
+
+    path = driver.setup_worktree(_make_issue(work), "develop", push=True)
+    assert _run_git(path, "branch", "--show-current") == "develop"
+    assert _run_git(path, "rev-parse", "HEAD") == main_rev
+
+
+def test_next_startable_serializes_direct_push_workdir(dbdir: Path, tmp_path: Path) -> None:
+    """直接 push 運用の workdir は同時に 1 Issue しか開始しない。"""
+    from alir import settings
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    conn = db.connect(dbdir)
+    settings.set_push_branch(conn, workdir=str(work), branch="develop")
+    first = registry.add(
+        conn, url="https://github.com/denzow/alir/issues/1", workdir=str(work.resolve())
+    )
+    second = registry.add(
+        conn, url="https://github.com/denzow/alir/issues/2", workdir=str(work.resolve())
+    )
+    outside = registry.add(
+        conn, url="https://github.com/denzow/alir/issues/3", workdir=str(other.resolve())
+    )
+
+    registry.set_status(conn, first.id, registry.STATUS_RUNNING)
+    picked = driver.next_startable(conn)
+    assert picked is not None and picked.id == outside.id
+
+    registry.set_status(conn, first.id, registry.STATUS_DONE)
+    picked = driver.next_startable(conn)
+    assert picked is not None and picked.id == second.id
 
 
 def test_prompt_requires_explicit_acceptance_criteria(dbdir: Path) -> None:

@@ -22,6 +22,9 @@ $ alir issues                       # list
 $ alir issues import --label agent-ready --workdir ~/work/repo   # bulk import by label (helper)
 $ alir issues targets add --label agent-ready --workdir ~/work/repo  # auto-import issues with this label
 
+# Direct-push mode: skip PRs for this repository and keep pushing to develop
+$ alir push-branch set --workdir ~/work/repo --branch develop
+
 # Start everything in one process: loop driver + Web UI + MCP (HTTP)
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 
@@ -31,6 +34,11 @@ $ alir questions
 # Answer a question (option number or free text)
 $ alir answer 1 2 "Go with B, but write the tests first"
 ```
+
+Repositories registered with `alir push-branch set` run in direct-push mode.
+Sessions skip PRs and work in a shared worktree that checks out the push branch, pushing to it directly.
+Only one session runs at a time per such repository.
+Pick a branch that is not checked out in the workdir (git refuses to create a worktree for a checked-out branch).
 
 `alir serve` is the recommended way to run alir.
 Claude sessions started by the driver connect to the MCP endpoint at `http://127.0.0.1:PORT/mcp` instead of spawning a subprocess per session.

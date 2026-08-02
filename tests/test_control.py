@@ -69,7 +69,7 @@ def test_log_event_rotates(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert [e.message for e in events] == ["e4", "e3", "e2"]
 
 
-def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
+def _fake_worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
     return Path("/tmp/wt")
 
 

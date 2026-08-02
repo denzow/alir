@@ -57,7 +57,7 @@ def test_pause_reason_none_under_threshold(dbdir: Path) -> None:
     assert usage.pause_reason(conn, usage.Budget(session_tokens=1000)) is None
 
 
-def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
+def _fake_worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
     return Path("/tmp/wt")
 
 

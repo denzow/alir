@@ -1,4 +1,4 @@
-"""設定値(ブランチ名テンプレート)のテスト。"""
+"""設定値(ブランチ名テンプレート・直接 push 運用)のテスト。"""
 
 from __future__ import annotations
 
@@ -59,3 +59,46 @@ def test_render_branch_fills_session_placeholders_with_provisional(conn) -> None
 def test_has_session_placeholders() -> None:
     assert settings.has_session_placeholders("{number}/{type}/{summary}") is True
     assert settings.has_session_placeholders("alir/issue-{number}") is False
+
+
+def test_push_branches_default_empty(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.push_branches(conn) == {}
+    assert settings.push_branch(conn, "/tmp/none") is None
+
+
+def test_set_and_clear_push_branch(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    settings.set_push_branch(conn, workdir=str(workdir), branch="develop")
+    resolved = str(workdir.resolve())
+    assert settings.push_branches(conn) == {resolved: "develop"}
+    assert settings.push_branch(conn, resolved) == "develop"
+
+    settings.clear_push_branch(conn, workdir=str(workdir))
+    assert settings.push_branches(conn) == {}
+
+
+def test_set_push_branch_overwrites_existing(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    settings.set_push_branch(conn, workdir=str(workdir), branch="develop")
+    settings.set_push_branch(conn, workdir=str(workdir), branch="main")
+    assert settings.push_branch(conn, str(workdir.resolve())) == "main"
+
+
+@pytest.mark.parametrize("branch", ["", "-bad", "has space", "double..dot", "ends/", "a.lock"])
+def test_set_push_branch_rejects_invalid_branch(conn, tmp_path: Path, branch: str) -> None:  # type: ignore[no-untyped-def]
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    with pytest.raises(SettingsError):
+        settings.set_push_branch(conn, workdir=str(workdir), branch=branch)
+
+
+def test_set_push_branch_rejects_missing_workdir(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_push_branch(conn, workdir=str(tmp_path / "missing"), branch="develop")
+
+
+def test_clear_push_branch_unknown_raises(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.clear_push_branch(conn, workdir=str(tmp_path))

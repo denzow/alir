@@ -8,11 +8,12 @@ from pathlib import Path
 import click
 
 import alir
-from alir import db, importer, questions, registry, usage
+from alir import db, importer, questions, registry, settings, usage
 from alir.config import data_dir
 from alir.importer import ImporterError
 from alir.questions import Question, QuestionError
 from alir.registry import RegistryError
+from alir.settings import SettingsError
 
 
 @click.group()
@@ -188,6 +189,55 @@ def targets_remove(label: str, workdir: Path) -> None:
     except ImporterError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"removed: {label} ({workdir})")
+
+
+@main.group("push-branch", invoke_without_command=True)
+@click.pass_context
+def push_branch_group(ctx: click.Context) -> None:
+    """直接 push 運用(PR を作らないリポジトリ)を操作する。サブコマンドなしなら一覧する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        items = settings.push_branches(conn)
+        if not items:
+            click.echo("no push branches")
+            return
+        for workdir, branch in items.items():
+            click.echo(f"{branch} ({workdir})")
+
+
+@push_branch_group.command("set")
+@click.option(
+    "--workdir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="対象リポジトリのローカルパス",
+)
+@click.option("--branch", required=True, help="push 先のブランチ名")
+def push_branch_set(workdir: Path, branch: str) -> None:
+    """workdir を直接 push 運用にする(PR を作らず BRANCH へ push して開発を続ける)。"""
+    conn = db.connect(data_dir())
+    try:
+        settings.set_push_branch(conn, workdir=str(workdir), branch=branch)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {branch} ({workdir.resolve()})")
+
+
+@push_branch_group.command("unset")
+@click.option(
+    "--workdir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=".",
+    help="対象リポジトリのローカルパス",
+)
+def push_branch_unset(workdir: Path) -> None:
+    """workdir の直接 push 運用をやめる(通常の PR 運用に戻す)。"""
+    conn = db.connect(data_dir())
+    try:
+        settings.clear_push_branch(conn, workdir=str(workdir))
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"unset: {workdir.resolve()}")
 
 
 def _run_options(f: Callable[..., None]) -> Callable[..., None]:
