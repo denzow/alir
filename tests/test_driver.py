@@ -35,9 +35,27 @@ def _runner(result: RunResult):  # type: ignore[no-untyped-def]
     return run
 
 
+def _reporting_runner(result: RunResult, *, outcome: str = "implemented"):  # type: ignore[no-untyped-def]
+    """report_result 相当の報告を残して終える runner。プロンプトから issue を読む。"""
+    import re
+
+    from alir import reports
+
+    def run(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        match = re.search(r"denzow/alir#\d+", prompt)
+        assert match is not None
+        conn = db.connect(dbdir)
+        reports.add(conn, issue=match.group(0), summary="実施内容", outcome=outcome)
+        run.prompts.append(prompt)  # type: ignore[attr-defined]
+        return result
+
+    run.prompts = []  # type: ignore[attr-defined]
+    return run
+
+
 def test_process_issue_done(dbdir: Path) -> None:
     issue = _add_issue(dbdir)
-    runner = _runner(RunResult(exit_code=0, session_id="sess-1", output="ok"))
+    runner = _reporting_runner(RunResult(exit_code=0, session_id="sess-1", output="ok"))
     finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
     assert finished.status == registry.STATUS_DONE
     assert finished.session_id == "sess-1"
@@ -111,7 +129,7 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     registry.add(conn, url=URL, workdir="/tmp/a")
     registry.add(conn, url="https://github.com/denzow/alir/issues/13", workdir="/tmp/b")
 
-    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    runner = _reporting_runner(RunResult(exit_code=0, session_id=None, output="ok"))
     logs: list[str] = []
     driver.run_loop(dbdir, once=True, runner=runner, worktree=_fake_worktree, log=logs.append)
     conn = db.connect(dbdir)
@@ -271,7 +289,7 @@ def test_process_issue_ignores_stale_refined_report(dbdir: Path) -> None:
     import time
 
     time.sleep(1.1)  # created_at が秒精度のため、開始時刻を確実に後にする
-    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    runner = _reporting_runner(RunResult(exit_code=0, session_id=None, output="ok"))
     finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
     assert finished.status == registry.STATUS_DONE
 
@@ -360,3 +378,53 @@ def test_prompt_instructs_stop_on_usage(dbdir: Path) -> None:
     prompt = runner.prompts[0]  # type: ignore[attr-defined]
     assert '"stop": true' in prompt
     assert 'outcome="aborted"' in prompt
+
+
+def test_prompt_warns_against_background_wait(dbdir: Path) -> None:
+    """バックグラウンド完了待ちで応答を終えるとセッションごと死ぬことを明記する。"""
+    issue = _add_issue(dbdir)
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "run_in_background" in prompt
+    assert "フォアグラウンドで実行して完了まで待つ" in prompt
+
+
+def test_process_issue_requeues_once_without_report(dbdir: Path) -> None:
+    """report_result なしの正常終了は 1 回だけ queued に戻し、連続したら failed。"""
+    issue = _add_issue(dbdir)
+    silent = _runner(RunResult(exit_code=0, session_id="sess-1", output="ok"))
+
+    first = driver.process_issue(dbdir, issue.id, runner=silent, worktree=_fake_worktree)
+    assert first.status == registry.STATUS_QUEUED
+
+    second = driver.process_issue(dbdir, issue.id, runner=silent, worktree=_fake_worktree)
+    assert second.status == registry.STATUS_FAILED
+
+    # failed 時に印は消えるので、人間が queued に戻せば再試行の権利は復活する
+    third = driver.process_issue(dbdir, issue.id, runner=silent, worktree=_fake_worktree)
+    assert third.status == registry.STATUS_QUEUED
+
+
+def test_report_clears_missing_report_marker(dbdir: Path) -> None:
+    """報告のあるセッションを挟めば、報告なし requeue はまた 1 回許される。"""
+    issue = _add_issue(dbdir)
+    silent = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    reporting = _reporting_runner(RunResult(exit_code=0, session_id=None, output="ok"))
+
+    assert (
+        driver.process_issue(dbdir, issue.id, runner=silent, worktree=_fake_worktree).status
+        == registry.STATUS_QUEUED
+    )
+    assert (
+        driver.process_issue(dbdir, issue.id, runner=reporting, worktree=_fake_worktree).status
+        == registry.STATUS_DONE
+    )
+    import time
+
+    time.sleep(1.1)  # created_at が秒精度のため、直前の報告を実行前のものにする
+    # 印が消えているので failed ではなく queued に戻る
+    assert (
+        driver.process_issue(dbdir, issue.id, runner=silent, worktree=_fake_worktree).status
+        == registry.STATUS_QUEUED
+    )

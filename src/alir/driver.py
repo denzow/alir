@@ -173,6 +173,12 @@ def build_prompt(
         "何もする必要がなかった場合(実装済みの PR がすでにある、など)も、",
         'その旨を summary にして report_result(outcome="implemented")で報告する。',
         "",
+        "実行環境の注意:",
+        "このセッションは応答を終えた時点で終了し、再開されない。",
+        "バックグラウンド実行(run_in_background)や Monitor の完了通知を待つ形で",
+        "応答を終えると、通知は届かず、そこまでの作業がすべて失われる。",
+        "テストなどの長いコマンドはフォアグラウンドで実行して完了まで待つ。",
+        "",
         "作業の節目(調査を終えた、実装に入った、テストを回した、PR を作った、など)ごとに、",
         "report_progress MCP ツールで進捗を 1 行報告する。"
         f'issue パラメータには "{issue.ref}" を渡す。',
@@ -288,6 +294,8 @@ def process_issue(
     再開時は前回のブランチをそのまま使う。
     セッションがリファインメントだけで終えた(outcome="refined"の報告)場合は
     queued に戻し、次のセッションが実装する。
+    report_result を呼ばずに終了した場合は途中死とみなして 1 回だけ queued に戻し、
+    それでも連続したら failed にする。
     """
     started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     conn = db.connect(dbdir)
@@ -337,6 +345,8 @@ def process_issue(
     run_reports = [
         r for r in reports.list_reports(conn, issue=issue.ref) if r.created_at >= started_at
     ]
+    if run_reports:
+        control.clear_missing_report_requeued(conn, issue.ref)
     requeue_reported = any(
         r.outcome in (reports.OUTCOME_REFINED, reports.OUTCOME_ABORTED) for r in run_reports
     )
@@ -350,6 +360,21 @@ def process_issue(
         status = registry.STATUS_FAILED
     elif requeue_reported or stopped_without_report:
         status = registry.STATUS_QUEUED
+    elif not run_reports:
+        # report_result なしの正常終了は途中死とみなす(プロンプトは報告を義務づけている)。
+        # 1 回だけ queued に戻して再試行し、連続したら failed で人間に返す。
+        if control.missing_report_requeued_at(conn, issue.ref) is not None:
+            control.clear_missing_report_requeued(conn, issue.ref)
+            control.log_event(
+                conn, f"issue #{iid} が連続して report_result なしで終了したため failed にした"
+            )
+            status = registry.STATUS_FAILED
+        else:
+            control.mark_missing_report_requeued(conn, issue.ref)
+            control.log_event(
+                conn, f"issue #{iid} が report_result なしで終了したため queued に戻した"
+            )
+            status = registry.STATUS_QUEUED
     else:
         status = registry.STATUS_DONE
     return registry.set_status(conn, iid, status, session_id=result.session_id, branch=branch)

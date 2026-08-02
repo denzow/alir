@@ -26,6 +26,15 @@ def test_paused_flag_roundtrip(dbdir: Path) -> None:
     assert control.is_paused(conn) is False
 
 
+def test_missing_report_marker_roundtrip(dbdir: Path) -> None:
+    conn = db.connect(dbdir)
+    assert control.missing_report_requeued_at(conn, "denzow/alir#12") is None
+    control.mark_missing_report_requeued(conn, "denzow/alir#12")
+    assert control.missing_report_requeued_at(conn, "denzow/alir#12") is not None
+    control.clear_missing_report_requeued(conn, "denzow/alir#12")
+    assert control.missing_report_requeued_at(conn, "denzow/alir#12") is None
+
+
 def test_driver_alive_by_heartbeat(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     assert control.driver_alive(conn) is False
@@ -95,11 +104,16 @@ def test_run_loop_cycles_while_session_running(dbdir: Path) -> None:
     b_finished = threading.Event()
 
     def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        from alir import reports
+
         if "issues/12" in prompt:
             conn2 = db.connect(dbdir)
             registry.add(conn2, url="https://github.com/denzow/alir/issues/13", workdir="/tmp")
             assert b_finished.wait(timeout=5), "issue B did not start while A was running"
+            reports.add(conn2, issue="denzow/alir#12", summary="実装 A", outcome="implemented")
             return RunResult(exit_code=0, session_id=None, output="a")
+        conn3 = db.connect(dbdir)
+        reports.add(conn3, issue="denzow/alir#13", summary="実装 B", outcome="implemented")
         b_finished.set()
         return RunResult(exit_code=0, session_id=None, output="b")
 
@@ -127,6 +141,10 @@ def test_run_loop_recovers_orphaned_running_issues(dbdir: Path) -> None:
     registry.set_status(conn, issue.id, registry.STATUS_RUNNING)
 
     def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        from alir import reports
+
+        conn2 = db.connect(dbdir)
+        reports.add(conn2, issue="denzow/alir#12", summary="実装済み", outcome="implemented")
         return RunResult(exit_code=0, session_id=None, output="ok")
 
     logs: list[str] = []

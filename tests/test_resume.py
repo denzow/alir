@@ -105,7 +105,11 @@ def test_run_loop_requeues_and_processes_answered_parked(dbdir: Path) -> None:
     prompts: list[str] = []
 
     def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        from alir import reports
+
         prompts.append(prompt)
+        conn = db.connect(dbdir)
+        reports.add(conn, issue="denzow/alir#12", summary="実装済み", outcome="implemented")
         return RunResult(exit_code=0, session_id="sess-2", output="ok")
 
     def worktree(issue: registry.Issue, branch: str) -> Path:

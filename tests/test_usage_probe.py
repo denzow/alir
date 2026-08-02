@@ -46,6 +46,20 @@ def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
     return Path("/tmp/wt")
 
 
+def _report_and_ok(
+    *, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False
+) -> RunResult:
+    """implemented の報告を残して正常終了する runner。プロンプトから issue を読む。"""
+    import re
+
+    from alir import reports
+
+    match = re.search(r"denzow/alir#\d+", prompt)
+    assert match is not None
+    reports.add(db.connect(dbdir), issue=match.group(0), summary="実装済み")
+    return RunResult(exit_code=0, session_id=None, output="ok")
+
+
 def test_run_loop_pauses_when_usage_over_threshold(tmp_path: Path) -> None:
     dbdir = tmp_path / "data"
     conn = db.connect(dbdir)
@@ -84,14 +98,11 @@ def test_run_loop_stores_usage_and_reprobes_before_next_start(tmp_path: Path) ->
         calls.append(1)
         return usage.UsageStatus(windows=(usage.UsageWindow("session", 19.0),))
 
-    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
-        return RunResult(exit_code=0, session_id=None, output="ok")
-
     driver.run_loop(
         dbdir,
         once=True,
         parallel=1,
-        runner=runner,
+        runner=_report_and_ok,
         worktree=_fake_worktree,
         usage_probe=probe,
         log=lambda _: None,
@@ -108,10 +119,9 @@ def test_run_loop_skips_probe_when_disabled(tmp_path: Path) -> None:
     conn = db.connect(dbdir)
     registry.add(conn, url=URL, workdir="/tmp")
 
-    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
-        return RunResult(exit_code=0, session_id=None, output="ok")
-
-    driver.run_loop(dbdir, once=True, runner=runner, worktree=_fake_worktree, log=lambda _: None)
+    driver.run_loop(
+        dbdir, once=True, runner=_report_and_ok, worktree=_fake_worktree, log=lambda _: None
+    )
     conn = db.connect(dbdir)
     assert registry.list_issues(conn)[0].status == registry.STATUS_DONE
     assert control.get_value(conn, control.KEY_USAGE_STATUS) is None
@@ -126,13 +136,10 @@ def test_run_loop_honors_usage_threshold_without_budget(tmp_path: Path) -> None:
     def probe() -> usage.UsageStatus:
         return usage.UsageStatus(windows=(usage.UsageWindow("week (Fable)", 55.0),))
 
-    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
-        return RunResult(exit_code=0, session_id=None, output="ok")
-
     driver.run_loop(
         dbdir,
         once=True,
-        runner=runner,
+        runner=_report_and_ok,
         worktree=_fake_worktree,
         usage_probe=probe,
         usage_threshold=0.7,
@@ -308,6 +315,27 @@ def test_stale_stop_instruction_is_ignored(tmp_path: Path) -> None:
     """前回の実行で出た stop 指示は今回の判定に影響しない。"""
     import time as time_mod
 
+    from alir import control, reports
+
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    control.mark_stop_instructed(conn, "denzow/alir#12")
+    time_mod.sleep(1.1)  # 記録が秒精度のため
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        conn2 = db.connect(dbdir)
+        reports.add(conn2, issue="denzow/alir#12", summary="実装済み")
+        return RunResult(exit_code=0, session_id=None, output="ok")
+
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    assert finished.status == registry.STATUS_DONE
+
+
+def test_stale_stop_with_missing_report_uses_retry_marker(tmp_path: Path) -> None:
+    """stale な stop 指示 + 報告なし終了は、stop の保険ではなく途中死として扱う。"""
+    import time as time_mod
+
     from alir import control
 
     dbdir = tmp_path / "data"
@@ -317,7 +345,9 @@ def test_stale_stop_instruction_is_ignored(tmp_path: Path) -> None:
     time_mod.sleep(1.1)  # 記録が秒精度のため
 
     def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
-        return RunResult(exit_code=0, session_id=None, output="ok")
+        return RunResult(exit_code=0, session_id=None, output="quit silently")
 
     finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
-    assert finished.status == registry.STATUS_DONE
+    assert finished.status == registry.STATUS_QUEUED
+    conn = db.connect(dbdir)
+    assert control.missing_report_requeued_at(conn, "denzow/alir#12") is not None

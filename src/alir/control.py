@@ -79,6 +79,29 @@ def stop_instructed_at(conn: iceql.Connection, issue_ref: str) -> str | None:
     return get_value(conn, f"stop_instructed:{issue_ref}")
 
 
+def mark_missing_report_requeued(conn: iceql.Connection, issue_ref: str) -> None:
+    """報告なしで終了したセッションを queued に戻したことを記録する。
+
+    連続して報告なしで終了した場合に failed へ落とすための印。
+    """
+    set_value(
+        conn,
+        f"missing_report_requeued:{issue_ref}",
+        _now().isoformat(timespec="seconds"),
+    )
+
+
+def missing_report_requeued_at(conn: iceql.Connection, issue_ref: str) -> str | None:
+    """報告なし requeue を記録した時刻(ISO 文字列)。なければ None。"""
+    return get_value(conn, f"missing_report_requeued:{issue_ref}") or None
+
+
+def clear_missing_report_requeued(conn: iceql.Connection, issue_ref: str) -> None:
+    """報告なし requeue の印を消す。報告のあるセッションが終わったら呼ぶ。"""
+    if get_value(conn, f"missing_report_requeued:{issue_ref}"):
+        set_value(conn, f"missing_report_requeued:{issue_ref}", "")
+
+
 def heartbeat(conn: iceql.Connection) -> None:
     """ドライバの生存時刻を記録する。各サイクルの先頭で呼ぶ。"""
     set_value(conn, KEY_HEARTBEAT, _now().isoformat(timespec="seconds"))
