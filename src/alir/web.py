@@ -7,6 +7,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import socket
@@ -68,6 +69,28 @@ def lan_ip() -> str | None:
     return None if ip.startswith("127.") else ip
 
 
+def _notify_address(host: str, detect: Callable[[], str | None]) -> str | None:
+    """通知に使うアドレスを bind 先から決める。
+
+    ワイルドカード(0.0.0.0 / :: / 空文字)なら LAN 内 IP を推定する。
+    loopback は LAN 内から到達できないので None(記録しない)。
+    IP でも loopback でもない値(ホスト名)はそのまま使う。
+    """
+    if host == "":
+        return detect()
+    if host == "localhost":
+        return None
+    try:
+        parsed = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if parsed.is_unspecified:
+        return detect()
+    if parsed.is_loopback:
+        return None
+    return host
+
+
 def record_auto_web_url(
     dbdir: Path, host: str, port: int, *, detect: Callable[[], str | None] = lan_ip
 ) -> str | None:
@@ -75,14 +98,17 @@ def record_auto_web_url(
 
     serve / web の起動時に呼ぶ。通知(notify.web_url)は settings と環境変数が
     どちらも未設定のときこの記録を使う。bind 先が特定のアドレスならそれを、
-    ワイルドカード(0.0.0.0 など)なら LAN 内 IP の推定値を使う。
-    検出できなければ記録を消し、古いアドレスを通知に載せない。
+    ワイルドカードなら LAN 内 IP の推定値を使う。検出できないときと
+    loopback バインドのときは記録を消し、届かないアドレスを通知に載せない。
     """
-    address = host if host not in ("0.0.0.0", "::", "") else detect()
+    address = _notify_address(host, detect)
     conn = db.connect(dbdir)
     if address is None:
         control.set_value(conn, control.KEY_WEB_URL_AUTO, "")
         return None
+    if ":" in address:
+        # IPv6 リテラルは URL ではブラケットで囲む
+        address = f"[{address}]"
     url = f"http://{address}:{port}"
     control.set_value(conn, control.KEY_WEB_URL_AUTO, url)
     return url

@@ -170,7 +170,7 @@ def set_web_url(conn: iceql.Connection, url: str) -> None:
 
 
 def clear_web_url(conn: iceql.Connection) -> None:
-    """Web UI の URL の設定を消す(環境変数があればそちらに戻る)。"""
+    """Web UI の URL の設定を消す(環境変数、なければ自動検出の URL に戻る)。"""
     control.set_value(conn, KEY_WEB_URL, "")
 
 

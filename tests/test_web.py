@@ -839,3 +839,29 @@ def test_settings_page_shows_auto_detected_web_url(
     res = client.get("/settings")
     assert "自動検出した" in res.text
     assert "http://192.168.1.30:8710" in res.text
+
+
+def test_record_auto_web_url_brackets_ipv6_host(dbdir: Path) -> None:
+    from alir.web import record_auto_web_url
+
+    url = record_auto_web_url(dbdir, "2001:db8::5", 8710)
+    assert url == "http://[2001:db8::5]:8710"
+
+
+def test_record_auto_web_url_detects_for_ipv6_wildcard(dbdir: Path) -> None:
+    from alir.web import record_auto_web_url
+
+    url = record_auto_web_url(dbdir, "::", 8710, detect=lambda: "192.168.1.30")
+    assert url == "http://192.168.1.30:8710"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_record_auto_web_url_skips_loopback_bind(dbdir: Path, host: str) -> None:
+    from alir import control
+    from alir.web import record_auto_web_url
+
+    conn = db.connect(dbdir)
+    control.set_value(conn, control.KEY_WEB_URL_AUTO, "http://old:8710")
+    url = record_auto_web_url(dbdir, host, 8710, detect=lambda: "192.168.1.30")
+    assert url is None
+    assert control.get_value(db.connect(dbdir), control.KEY_WEB_URL_AUTO) in (None, "")

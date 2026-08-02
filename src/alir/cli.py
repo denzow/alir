@@ -371,7 +371,7 @@ def web_url_set(url: str) -> None:
 
 @web_url_group.command("clear")
 def web_url_clear() -> None:
-    """Web UI の URL の設定を消す(環境変数があればそちらに戻る)。"""
+    """Web UI の URL の設定を消す(環境変数、なければ自動検出の URL に戻る)。"""
     settings.clear_web_url(db.connect(data_dir()))
     click.echo("cleared")
 
