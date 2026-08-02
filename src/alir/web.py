@@ -8,6 +8,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,8 +18,6 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
-import os
 
 from alir import (
     control,
