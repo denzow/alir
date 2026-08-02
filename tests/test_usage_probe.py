@@ -42,7 +42,7 @@ def test_status_pause_reason_threshold() -> None:
     assert usage.status_pause_reason(status, threshold=0.8) is None
 
 
-def _fake_worktree(issue: registry.Issue, branch: str) -> Path:
+def _fake_worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
     return Path("/tmp/wt")
 
 

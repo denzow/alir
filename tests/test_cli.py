@@ -102,3 +102,44 @@ def test_issues_targets_add_duplicate_fails(dbdir: Path, tmp_path: Path) -> None
     result = runner.invoke(main, args)
     assert result.exit_code != 0
     assert "already registered" in result.output
+
+
+def test_push_branch_set_list_unset(dbdir: Path, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["push-branch"])
+    assert result.exit_code == 0
+    assert "no push branches" in result.output
+
+    result = runner.invoke(
+        main, ["push-branch", "set", "--workdir", str(workdir), "--branch", "develop"]
+    )
+    assert result.exit_code == 0
+    assert "set: develop" in result.output
+
+    result = runner.invoke(main, ["push-branch"])
+    assert f"develop ({workdir.resolve()})" in result.output
+
+    result = runner.invoke(main, ["push-branch", "unset", "--workdir", str(workdir)])
+    assert result.exit_code == 0
+
+    result = runner.invoke(main, ["push-branch"])
+    assert "no push branches" in result.output
+
+
+def test_push_branch_set_invalid_branch_fails(dbdir: Path, tmp_path: Path) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    result = CliRunner().invoke(
+        main, ["push-branch", "set", "--workdir", str(workdir), "--branch", "bad..name"]
+    )
+    assert result.exit_code != 0
+    assert "invalid branch name" in result.output
+
+
+def test_push_branch_unset_unknown_fails(dbdir: Path, tmp_path: Path) -> None:
+    result = CliRunner().invoke(main, ["push-branch", "unset", "--workdir", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "not set" in result.output

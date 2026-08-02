@@ -58,3 +58,36 @@
     <button>対象を追加</button>
   </form>
 </div>
+<p class="section-label">直接 push(PR なし)</p>
+<div class="card add-form">
+  <p class="hint">
+    登録した workdir では PR を作らず、指定したブランチに直接 push して開発を続ける。
+    全 Issue が push 先ブランチの共有 worktree で作業するため、
+    同じ workdir のセッションは同時に 1 つしか動かない。
+    push 先には workdir でチェックアウトしていないブランチを指定する。
+  </p>
+  {% for workdir, branch in push_branches.items() %}
+  <form method="post" action="/settings/push-branches/unset"
+        hx-post="/settings/push-branches/unset" hx-target="#settings" hx-swap="innerHTML"
+        class="target-row">
+    <input type="hidden" name="workdir" value="{{ workdir }}">
+    <span class="target-desc"><code>{{ branch }}</code> {{ workdir }}</span>
+    <button>削除</button>
+  </form>
+  {% else %}
+  <p class="empty-inline">直接 push の設定はまだありません。</p>
+  {% endfor %}
+  <form method="post" action="/settings/push-branches/set"
+        hx-post="/settings/push-branches/set" hx-target="#settings" hx-swap="innerHTML">
+    <div class="field">
+      <label for="push-workdir">ローカルパス</label>
+      <input id="push-workdir" type="text" name="workdir" list="target-workdirs"
+             placeholder="対象リポジトリのローカルパス">
+    </div>
+    <div class="field">
+      <label for="push-branch">push 先ブランチ</label>
+      <input id="push-branch" type="text" name="branch" placeholder="develop">
+    </div>
+    <button>設定を追加</button>
+  </form>
+</div>

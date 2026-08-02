@@ -112,7 +112,7 @@ def test_run_loop_requeues_and_processes_answered_parked(dbdir: Path) -> None:
         reports.add(conn, issue="denzow/alir#12", summary="実装済み", outcome="implemented")
         return RunResult(exit_code=0, session_id="sess-2", output="ok")
 
-    def worktree(issue: registry.Issue, branch: str) -> Path:
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
         return Path("/tmp/wt")
 
     driver.run_loop(dbdir, once=True, runner=runner, worktree=worktree, log=lambda _: None)

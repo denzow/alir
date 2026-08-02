@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import iceql
 
@@ -14,6 +16,9 @@ from alir.registry import Issue
 
 KEY_BRANCH_TEMPLATE = "branch_template"
 DEFAULT_BRANCH_TEMPLATE = "alir/issue-{number}"
+
+# 直接 push 運用(PR を作らず push 先ブランチで開発を続ける)の workdir -> ブランチ名
+KEY_PUSH_BRANCHES = "push_branches"
 
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
@@ -65,6 +70,56 @@ def has_session_placeholders(template: str) -> bool:
     """セッションが決める変数({type} / {summary})を含むかどうか。"""
     fields = set(re.findall(r"{([^{}]*)}", template))
     return bool(fields & set(SESSION_PLACEHOLDERS))
+
+
+def validate_branch_name(branch: str) -> None:
+    """ブランチ名そのものを検証し、問題があれば SettingsError を送出する。"""
+    if (
+        not _VALID_BRANCH.match(branch)
+        or ".." in branch
+        or branch.endswith("/")
+        or branch.endswith(".lock")
+    ):
+        raise SettingsError(f"invalid branch name: {branch}")
+
+
+def push_branches(conn: iceql.Connection) -> dict[str, str]:
+    """直接 push 運用の workdir -> push 先ブランチの対応を返す。未設定なら空。"""
+    raw = control.get_value(conn, KEY_PUSH_BRANCHES)
+    if not raw:
+        return {}
+    return {str(k): str(v) for k, v in json.loads(raw).items()}
+
+
+def push_branch(conn: iceql.Connection, workdir: str) -> str | None:
+    """workdir の push 先ブランチを返す。直接 push 運用でなければ None。"""
+    return push_branches(conn).get(workdir)
+
+
+def _save_push_branches(conn: iceql.Connection, mapping: dict[str, str]) -> None:
+    control.set_value(conn, KEY_PUSH_BRANCHES, json.dumps(mapping, ensure_ascii=False))
+
+
+def set_push_branch(conn: iceql.Connection, *, workdir: str, branch: str) -> None:
+    """workdir を直接 push 運用にする(PR を作らず branch へ push して開発を続ける)。"""
+    branch = branch.strip()
+    validate_branch_name(branch)
+    path = Path(workdir).expanduser()
+    if not path.is_dir():
+        raise SettingsError(f"workdir not found: {workdir}")
+    mapping = push_branches(conn)
+    mapping[str(path.resolve())] = branch
+    _save_push_branches(conn, mapping)
+
+
+def clear_push_branch(conn: iceql.Connection, *, workdir: str) -> None:
+    """workdir の直接 push 運用をやめる。設定がなければ SettingsError。"""
+    resolved = str(Path(workdir).expanduser().resolve())
+    mapping = push_branches(conn)
+    if resolved not in mapping:
+        raise SettingsError(f"push branch not set: {workdir}")
+    del mapping[resolved]
+    _save_push_branches(conn, mapping)
 
 
 def render_branch(template: str, issue: Issue) -> str:
