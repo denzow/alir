@@ -439,6 +439,29 @@ def test_process_issue_direct_push_uses_push_branch(dbdir: Path, tmp_path: Path)
     assert "gh pr create" not in prompt
 
 
+def test_process_issue_direct_push_overrides_stored_branch(dbdir: Path, tmp_path: Path) -> None:
+    """保存済みブランチがあっても、直接 push 運用では現在の push 先を使う。"""
+    from alir import settings
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    issue = _add_issue(dbdir, workdir=str(work.resolve()))
+    conn = db.connect(dbdir)
+    registry.set_status(conn, issue.id, registry.STATUS_QUEUED, branch="old-branch")
+    settings.set_push_branch(conn, workdir=str(work), branch="develop")
+
+    captured: dict[str, str] = {}
+
+    def worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
+        captured["branch"] = branch
+        return Path("/tmp/wt")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=worktree)
+    assert captured["branch"] == "develop"
+    assert finished.branch == "develop"
+
+
 def test_prompt_direct_push_omits_rename_instruction(dbdir: Path, tmp_path: Path) -> None:
     """直接 push 運用ではテンプレートに {type} 等があってもブランチを改名させない。"""
     from alir import settings
@@ -480,7 +503,7 @@ def test_setup_worktree_direct_push_shares_branch_worktree(tmp_path: Path) -> No
     latest = _run_git(seed, "rev-parse", "develop")
 
     path = driver.setup_worktree(_make_issue(work), "develop", push=True)
-    assert path.name == "branch-develop"
+    assert path == work.parent / "repo-alir" / "branches" / "develop"
     assert _run_git(path, "branch", "--show-current") == "develop"
     assert _run_git(path, "rev-parse", "HEAD") == latest
 

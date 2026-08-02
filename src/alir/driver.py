@@ -116,17 +116,20 @@ def _setup_push_worktree(workdir: Path, branch: str, root: Path) -> Path:
     """push 先ブランチをチェックアウトした共有 worktree を用意する。
 
     直接 push 運用では同じ workdir の全 Issue がこの worktree
-    (<repo>-alir/branch-<name>)で順番に作業する。再利用時は origin の
+    (<repo>-alir/branches/<ブランチ名>)で順番に作業する。再利用時は origin の
     進みに追従する(fast-forward のみ。追従できなくても続行する)。
     push 先ブランチが workdir 側でチェックアウト中だと git が worktree の
     作成を拒否するので、専用のブランチを指定する運用を想定する。
     """
-    path = root / f"branch-{branch.replace('/', '-')}"
+    # "/" を含むブランチ名はそのまま入れ子のディレクトリにする
+    # (feat/x と feat-x が同じパスに写像されて別ブランチの worktree を
+    # 誤って再利用することを避ける)
+    path = root / "branches" / branch
     if path.exists():
         with contextlib.suppress(DriverError):
             _git(path, "pull", "--ff-only", "origin", branch)
         return path
-    root.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     # fetch の失敗(オフライン・リモート未作成など)は致命的でないので続行する
     with contextlib.suppress(DriverError):
         _git(workdir, "fetch", "origin", branch)
@@ -426,8 +429,8 @@ def process_issue(
 
     ブランチ名は初回はテンプレート(settings)から作り、
     再開時は前回のブランチをそのまま使う。workdir が直接 push 運用
-    (settings.push_branch)なら push 先ブランチをそのまま使い、PR を作らない
-    手順のプロンプトにする。
+    (settings.push_branch)なら再開時も含め常に現在の push 先ブランチを使い、
+    PR を作らない手順のプロンプトにする。
     park からの再開(回答検知が resume_session を記録済み)は、settings で
     無効化されていなければ --resume で前回セッションを文脈ごと再開する。
     resume が失敗した場合(セッションの期限切れなど)は新規セッションに
@@ -451,7 +454,10 @@ def process_issue(
     template = settings.branch_template(conn)
     push_branch = settings.push_branch(conn, issue.workdir)
     if push_branch is not None:
-        branch = issue.branch or push_branch
+        # 直接 push 運用は保存済みブランチより現在の設定を優先する。
+        # 通常運用から切り替えた Issue や、push 先を変更した後の再開でも
+        # 常に設定された push 先ブランチで作業する。
+        branch = push_branch
     else:
         branch = issue.branch or settings.render_branch(template, issue)
     ci_failed_pr = ci.take_ci_failure(conn, issue.ref)
@@ -681,7 +687,7 @@ def run_loop(
                     emit(f"requeue #{requeued.id} {requeued.ref}: PR CI failed ({pr_url})")
 
             # 開始候補がないときは使用率を取りに行かない(アイドル時の無駄な実行を避ける)
-            has_queued = registry.next_queued(conn) is not None
+            has_queued = next_startable(conn) is not None
             if usage_probe is not None and has_queued and time.monotonic() >= next_probe:
                 probe_status = usage_probe()
                 next_probe = time.monotonic() + usage_check_ttl
