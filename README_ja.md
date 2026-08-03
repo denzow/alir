@@ -35,6 +35,10 @@ $ alir model set sonnet
 $ alir pushover set --token <APIトークン> --user <ユーザーキー>
 $ alir pushover test
 
+# 通知をタップしたとき開く Web UI の URL は serve が起動時に自動検出する。
+# 違うアドレスで届けたいときだけ設定する
+$ alir web-url set http://192.168.1.10:8710
+
 # ループドライバ・Web UI・MCP(HTTP) をワンプロセスで起動する
 $ alir serve --port 8710 --session-budget 4000000 --weekly-budget 20000000
 

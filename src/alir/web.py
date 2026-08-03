@@ -7,8 +7,11 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,6 +52,66 @@ def _localtime(value: str | datetime) -> str:
 templates.env.filters["localtime"] = _localtime
 
 router = APIRouter()
+
+
+def lan_ip() -> str | None:
+    """LAN 内から到達できそうなこのホストの IPv4 アドレスを推定する。
+
+    外向きの UDP ソケットに選ばれる送信元アドレスを使う(パケットは送らない)。
+    経路がない・loopback しか得られないときは None。
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 80))  # TEST-NET-1。経路の選択にだけ使う
+            ip = str(sock.getsockname()[0])
+    except OSError:
+        return None
+    return None if ip.startswith("127.") else ip
+
+
+def _notify_address(host: str, detect: Callable[[], str | None]) -> str | None:
+    """通知に使うアドレスを bind 先から決める。
+
+    ワイルドカード(0.0.0.0 / :: / 空文字)なら LAN 内 IP を推定する。
+    loopback は LAN 内から到達できないので None(記録しない)。
+    IP でも loopback でもない値(ホスト名)はそのまま使う。
+    """
+    if host == "":
+        return detect()
+    if host == "localhost":
+        return None
+    try:
+        parsed = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if parsed.is_unspecified:
+        return detect()
+    if parsed.is_loopback:
+        return None
+    return host
+
+
+def record_auto_web_url(
+    dbdir: Path, host: str, port: int, *, detect: Callable[[], str | None] = lan_ip
+) -> str | None:
+    """自動検出した Web UI の URL を control に記録し、その URL を返す。
+
+    serve / web の起動時に呼ぶ。通知(notify.web_url)は settings と環境変数が
+    どちらも未設定のときこの記録を使う。bind 先が特定のアドレスならそれを、
+    ワイルドカードなら LAN 内 IP の推定値を使う。検出できないときと
+    loopback バインドのときは記録を消し、届かないアドレスを通知に載せない。
+    """
+    address = _notify_address(host, detect)
+    conn = db.connect(dbdir)
+    if address is None:
+        control.set_value(conn, control.KEY_WEB_URL_AUTO, "")
+        return None
+    if ":" in address:
+        # IPv6 リテラルは URL ではブラケットで囲む
+        address = f"[{address}]"
+    url = f"http://{address}:{port}"
+    control.set_value(conn, control.KEY_WEB_URL_AUTO, url)
+    return url
 
 
 def _is_htmx(request: Request) -> bool:
@@ -322,11 +385,19 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
         "push_branches": settings.push_branches(conn),
         "workdirs": registry.list_workdirs(conn),
         "pushover_status": notify.pushover_source(conn),
+        "web_url": settings.web_url(conn),
+        "web_url_env": os.environ.get(notify.ENV_WEB_URL),
+        "web_url_auto": control.get_value(conn, control.KEY_WEB_URL_AUTO) or None,
     }
 
 
 async def _settings_result(
-    request: Request, dbdir: Path, error: str | None, *, saved: bool = False, notice: str | None = None
+    request: Request,
+    dbdir: Path,
+    error: str | None,
+    *,
+    saved: bool = False,
+    notice: str | None = None,
 ) -> Response:
     """settings への POST の結果を返す。htmx ならフォーム断片、通常はリダイレクト。"""
     if _is_htmx(request):
@@ -465,7 +536,7 @@ async def settings_pushover_test(request: Request) -> Response:
     try:
         sent = await db.run_in_thread(
             lambda: notify.send_pushover(
-                "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
+                "alir からのテスト通知", url=notify.web_url(db.connect(dbdir))
             )
         )
         if sent:
@@ -475,6 +546,27 @@ async def settings_pushover_test(request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001
         error = f"送信に失敗しました: {exc}"
     return await _settings_result(request, dbdir, error, notice=notice)
+
+
+@router.post("/settings/web-url/set")
+async def settings_web_url_set(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    url = str(form.get("url") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(lambda: settings.set_web_url(db.connect(dbdir), url))
+    except SettingsError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error)
+
+
+@router.post("/settings/web-url/clear")
+async def settings_web_url_clear(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    await db.run_in_thread(lambda: settings.clear_web_url(db.connect(dbdir)))
+    return await _settings_result(request, dbdir, None)
 
 
 async def _loop_context(dbdir: Path) -> dict[str, Any]:

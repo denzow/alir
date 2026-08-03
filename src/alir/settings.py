@@ -34,6 +34,10 @@ KEY_MODEL = "model"
 # 未設定なら環境変数(ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER)にフォールバックする
 KEY_PUSHOVER = "pushover"
 
+# 通知に含める Web UI の URL(LAN 内からアクセスできるもの)。
+# 未設定なら環境変数(ALIR_WEB_URL)にフォールバックする
+KEY_WEB_URL = "web_url"
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -150,6 +154,24 @@ def set_pushover(conn: iceql.Connection, *, token: str, user: str) -> None:
 def clear_pushover(conn: iceql.Connection) -> None:
     """Pushover の認証情報を消す(環境変数があればそちらに戻る)。"""
     control.set_value(conn, KEY_PUSHOVER, "")
+
+
+def web_url(conn: iceql.Connection) -> str | None:
+    """通知に含める Web UI の URL を返す。未設定なら None。"""
+    return control.get_value(conn, KEY_WEB_URL) or None
+
+
+def set_web_url(conn: iceql.Connection, url: str) -> None:
+    """通知に含める Web UI の URL を設定する。次の通知から使われる。"""
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise SettingsError("url must start with http:// or https://")
+    control.set_value(conn, KEY_WEB_URL, url)
+
+
+def clear_web_url(conn: iceql.Connection) -> None:
+    """Web UI の URL の設定を消す(環境変数、なければ自動検出の URL に戻る)。"""
+    control.set_value(conn, KEY_WEB_URL, "")
 
 
 def retry_limit(conn: iceql.Connection) -> int:

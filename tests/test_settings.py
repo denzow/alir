@@ -105,6 +105,23 @@ def test_set_pushover_requires_both(conn, token, user) -> None:  # type: ignore[
         settings.set_pushover(conn, token=token, user=user)
 
 
+def test_web_url_default_none(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.web_url(conn) is None
+
+
+def test_set_and_clear_web_url(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_web_url(conn, " http://192.168.1.10:8710 ")
+    assert settings.web_url(conn) == "http://192.168.1.10:8710"
+    settings.clear_web_url(conn)
+    assert settings.web_url(conn) is None
+
+
+@pytest.mark.parametrize("url", ["", "  ", "192.168.1.10:8710", "ftp://x"])
+def test_set_web_url_requires_http_scheme(conn, url) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_web_url(conn, url)
+
+
 def test_push_branches_default_empty(conn) -> None:  # type: ignore[no-untyped-def]
     assert settings.push_branches(conn) == {}
     assert settings.push_branch(conn, "/tmp/none") is None

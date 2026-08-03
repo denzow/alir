@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -335,9 +334,7 @@ def pushover_test() -> None:
     from alir import notify
 
     try:
-        sent = notify.send_pushover(
-            "alir からのテスト通知", url=os.environ.get(notify.ENV_WEB_URL)
-        )
+        sent = notify.send_pushover("alir からのテスト通知", url=notify.web_url())
     except Exception as exc:  # noqa: BLE001
         raise click.ClickException(f"failed to send: {exc}") from exc
     if not sent:
@@ -345,6 +342,38 @@ def pushover_test() -> None:
             "not configured: alir pushover set --token ... --user ... で設定する"
         )
     click.echo("sent")
+
+
+@main.group("web-url", invoke_without_command=True)
+@click.pass_context
+def web_url_group(ctx: click.Context) -> None:
+    """通知に含める Web UI の URL を操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        from alir import notify
+
+        click.echo(notify.web_url() or "not set")
+
+
+@web_url_group.command("set")
+@click.argument("url")
+def web_url_set(url: str) -> None:
+    """通知に含める Web UI の URL を設定する(LAN 内からアクセスできるもの)。
+
+    例: alir web-url set http://192.168.1.10:8710
+    """
+    conn = db.connect(data_dir())
+    try:
+        settings.set_web_url(conn, url)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {url.strip()}")
+
+
+@web_url_group.command("clear")
+def web_url_clear() -> None:
+    """Web UI の URL の設定を消す(環境変数、なければ自動検出の URL に戻る)。"""
+    settings.clear_web_url(db.connect(data_dir()))
+    click.echo("cleared")
 
 
 @main.group("resume", invoke_without_command=True)
@@ -511,10 +540,13 @@ def serve_cmd(
 
     import uvicorn
 
-    from alir import ci, driver
+    from alir import ci, driver, web
     from alir.serve import create_combined_app
 
     dbdir = data_dir()
+    auto_url = web.record_auto_web_url(dbdir, host, port)
+    if auto_url:
+        click.echo(f"web ui: {auto_url}")
     app = create_combined_app(dbdir)
     runner = functools.partial(driver.run_claude, mcp_url=f"http://127.0.0.1:{port}/mcp")
     thread = threading.Thread(
@@ -545,6 +577,10 @@ def web_cmd(host: str, port: int) -> None:
     """回答用の Web UI を起動する(LAN 内のスマホからのアクセスを想定)。"""
     import uvicorn
 
-    from alir.web import create_app
+    from alir import web
 
-    uvicorn.run(create_app(data_dir()), host=host, port=port)
+    dbdir = data_dir()
+    auto_url = web.record_auto_web_url(dbdir, host, port)
+    if auto_url:
+        click.echo(f"web ui: {auto_url}")
+    uvicorn.run(web.create_app(dbdir), host=host, port=port)
