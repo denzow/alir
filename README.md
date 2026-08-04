@@ -20,7 +20,10 @@ $ alir issues add https://github.com/owner/repo/issues/13 --workdir ~/work/repo 
     --mode refine --note "limit the change to the API layer"
 $ alir issues                       # list
 $ alir issues import --label agent-ready --workdir ~/work/repo   # bulk import by label (helper)
-$ alir issues targets add --label agent-ready --workdir ~/work/repo  # auto-import issues with this label
+# Register an import target; the Web UI imports issues with this label when you press the button
+$ alir issues targets add --label agent-ready --workdir ~/work/repo
+# Optionally let the driver import on an interval too (0 = button only, the default)
+$ alir issues targets interval 300
 
 # Direct-push mode: skip PRs for this repository and keep pushing to develop
 $ alir push-branch set --workdir ~/work/repo --branch develop

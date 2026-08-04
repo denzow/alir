@@ -473,7 +473,7 @@ def test_settings_page_shows_import_targets(
     workdir.mkdir()
     importer.add_target(db.connect(dbdir), workdir=str(workdir), label="alir")
     res = client.get("/settings")
-    assert "自動取り込み" in res.text
+    assert "Issue の取り込み" in res.text
     assert "alir" in res.text
     assert str(workdir.resolve()) in res.text
 
@@ -520,6 +520,139 @@ def test_settings_targets_remove(client: TestClient, dbdir: Path, tmp_path: Path
     )
     assert res.status_code == 200
     assert importer.list_targets(db.connect(dbdir)) == []
+
+
+def _fake_fetch(monkeypatch: pytest.MonkeyPatch, items: list[dict[str, str]]) -> list[str]:
+    """gh の検索を差し替え、検索した workdir を記録するリストを返す。"""
+    from alir import importer
+
+    searched: list[str] = []
+
+    def fetch(workdir: str, label: str) -> list[dict[str, str]]:
+        searched.append(workdir)
+        return items
+
+    monkeypatch.setattr(importer, "fetch_labeled_issues", fetch)
+    return searched
+
+
+def test_settings_targets_import(
+    client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import control, importer, registry
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+    importer.add_target(conn, workdir=str(other), label="alir")
+    url = "https://github.com/denzow/alir/issues/12"
+    searched = _fake_fetch(monkeypatch, [{"url": url, "title": "取り込む Issue"}])
+
+    res = client.post(
+        "/settings/targets/import",
+        data={"workdir": str(workdir.resolve()), "label": "alir"},
+        headers={"HX-Request": "true"},
+    )
+    assert res.status_code == 200
+    assert "1 件を取り込みました" in res.text
+    # ボタンを押した対象だけを検索する
+    assert searched == [str(workdir.resolve())]
+    conn = db.connect(dbdir)
+    items = registry.list_issues(conn)
+    assert [(i.url, i.status) for i in items] == [(url, registry.STATUS_QUEUED)]
+    assert any("import #1" in e.message for e in control.recent_events(conn))
+
+
+def test_settings_targets_import_unknown_target_shows_error(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    searched = _fake_fetch(monkeypatch, [])
+    res = client.post(
+        "/settings/targets/import",
+        data={"workdir": str(workdir), "label": "alir"},
+        headers={"HX-Request": "true"},
+    )
+    assert "target not registered" in res.text
+    assert searched == []
+
+
+def test_settings_targets_import_all(
+    client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import importer, registry
+
+    first = tmp_path / "first"
+    first.mkdir()
+    second = tmp_path / "second"
+    second.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(first), label="alir")
+    importer.add_target(conn, workdir=str(second), label="alir")
+    searched = _fake_fetch(monkeypatch, [{"url": "https://github.com/denzow/alir/issues/12"}])
+
+    res = client.post("/settings/targets/import-all", headers={"HX-Request": "true"})
+    assert res.status_code == 200
+    assert searched == [str(first.resolve()), str(second.resolve())]
+    # 同じ URL は 2 対象目でスキップされる
+    assert "2 件が該当し、うち 1 件を取り込みました" in res.text
+    assert len(registry.list_issues(db.connect(dbdir))) == 1
+
+
+def test_settings_targets_import_shows_errors_with_count(
+    client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一部の対象が失敗しても、取り込めた件数はエラーと一緒に表示する。"""
+    from alir import importer, registry
+
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    ok = tmp_path / "ok"
+    ok.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(broken), label="alir")
+    importer.add_target(conn, workdir=str(ok), label="alir")
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        if wd == str(broken.resolve()):
+            raise importer.ImporterError("gh issue list failed: boom")
+        return [{"url": "https://github.com/denzow/alir/issues/12"}]
+
+    monkeypatch.setattr(importer, "fetch_labeled_issues", fetch)
+    res = client.post("/settings/targets/import-all", headers={"HX-Request": "true"})
+    assert "boom" in res.text
+    assert "うち 1 件を取り込みました" in res.text
+    assert len(registry.list_issues(db.connect(dbdir))) == 1
+
+
+def test_settings_targets_interval_set_and_disable(client: TestClient, dbdir: Path) -> None:
+    from alir import importer
+
+    res = client.post(
+        "/settings/targets/interval", data={"seconds": "300"}, headers={"HX-Request": "true"}
+    )
+    assert res.status_code == 200
+    assert importer.import_interval(db.connect(dbdir)) == 300.0
+
+    res = client.post(
+        "/settings/targets/interval", data={"seconds": "0"}, headers={"HX-Request": "true"}
+    )
+    assert importer.import_interval(db.connect(dbdir)) == 0.0
+    assert "無効にしました" in res.text
+
+
+def test_settings_targets_interval_rejects_too_short(client: TestClient, dbdir: Path) -> None:
+    from alir import importer
+
+    res = client.post(
+        "/settings/targets/interval", data={"seconds": "5"}, headers={"HX-Request": "true"}
+    )
+    assert "interval must be" in res.text
+    assert importer.import_interval(db.connect(dbdir)) == 0.0
 
 
 def test_settings_page_shows_push_branches(client: TestClient, dbdir: Path, tmp_path: Path) -> None:

@@ -144,7 +144,7 @@ def issues_import(label: str, workdir: Path) -> None:
 @issues_group.group("targets", invoke_without_command=True)
 @click.pass_context
 def issues_targets(ctx: click.Context) -> None:
-    """自動取り込みの対象を操作する。サブコマンドなしなら一覧する。"""
+    """取り込み対象を操作する。サブコマンドなしなら一覧する。"""
     if ctx.invoked_subcommand is None:
         conn = db.connect(data_dir())
         items = importer.list_targets(conn)
@@ -164,7 +164,7 @@ def issues_targets(ctx: click.Context) -> None:
     help="対象リポジトリのローカルパス",
 )
 def targets_add(label: str, workdir: Path) -> None:
-    """自動取り込みの対象(workdir + ラベル)を追加する。"""
+    """取り込み対象(workdir + ラベル)を追加する。Web UI の取り込みボタンで使う。"""
     conn = db.connect(data_dir())
     try:
         target = importer.add_target(conn, workdir=str(workdir), label=label)
@@ -182,13 +182,32 @@ def targets_add(label: str, workdir: Path) -> None:
     help="対象リポジトリのローカルパス",
 )
 def targets_remove(label: str, workdir: Path) -> None:
-    """自動取り込みの対象を削除する。"""
+    """取り込み対象を削除する。"""
     conn = db.connect(data_dir())
     try:
         importer.remove_target(conn, workdir=str(workdir), label=label)
     except ImporterError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"removed: {label} ({workdir})")
+
+
+@issues_targets.command("interval")
+@click.argument("seconds", type=float, required=False)
+def targets_interval(seconds: float | None) -> None:
+    """ドライバの定期取り込みの間隔(秒)を表示・設定する。0 で無効(既定)。
+
+    無効の間は Web UI の取り込みボタンからだけ取り込む。
+    """
+    conn = db.connect(data_dir())
+    if seconds is None:
+        current = importer.import_interval(conn)
+        click.echo("disabled" if current == 0 else f"every {current:g}s")
+        return
+    try:
+        importer.set_import_interval(conn, seconds)
+    except ImporterError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("disabled" if seconds == 0 else f"every {seconds:g}s")
 
 
 @main.group("push-branch", invoke_without_command=True)
@@ -448,13 +467,6 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
             help="claude -p /usage による公式使用率の確認を無効にする",
         ),
         click.option(
-            "--import-interval",
-            default=importer.DEFAULT_INTERVAL,
-            show_default=True,
-            type=float,
-            help="ラベル付き Issue の自動取り込みの実行間隔秒数",
-        ),
-        click.option(
             "--no-ci-check",
             is_flag=True,
             help="done の Issue の PR の CI 確認(失敗時の再キュー)を無効にする",
@@ -488,7 +500,6 @@ def run_cmd(
     weekly_budget: int | None,
     budget_threshold: float,
     no_usage_check: bool,
-    import_interval: float,
     no_ci_check: bool,
 ) -> None:
     """ループドライバを起動し、queued の Issue を処理し続ける。"""
@@ -506,7 +517,6 @@ def run_cmd(
         budget=_build_budget(session_budget, weekly_budget, budget_threshold),
         usage_probe=None if no_usage_check else usage.fetch_usage_status,
         usage_threshold=budget_threshold,
-        import_interval=import_interval,
         pr_status_fetch=None if no_ci_check else ci.fetch_pr_status,
     )
 
@@ -526,7 +536,6 @@ def serve_cmd(
     weekly_budget: int | None,
     budget_threshold: float,
     no_usage_check: bool,
-    import_interval: float,
     no_ci_check: bool,
 ) -> None:
     """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
@@ -560,7 +569,6 @@ def serve_cmd(
             "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
             "usage_probe": None if no_usage_check else usage.fetch_usage_status,
             "usage_threshold": budget_threshold,
-            "import_interval": import_interval,
             "pr_status_fetch": None if no_ci_check else ci.fetch_pr_status,
             "runner": runner,
         },

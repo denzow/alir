@@ -93,6 +93,26 @@ def test_issues_targets_add_list_remove(dbdir: Path, tmp_path: Path) -> None:
     assert "no targets" in result.output
 
 
+def test_issues_targets_interval(dbdir: Path) -> None:
+    from alir import db, importer
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["issues", "targets", "interval"])
+    assert result.exit_code == 0
+    assert "disabled" in result.output
+
+    result = runner.invoke(main, ["issues", "targets", "interval", "300"])
+    assert result.exit_code == 0
+    assert importer.import_interval(db.connect(dbdir)) == 300.0
+
+    result = runner.invoke(main, ["issues", "targets", "interval"])
+    assert "every 300s" in result.output
+
+    result = runner.invoke(main, ["issues", "targets", "interval", "5"])
+    assert result.exit_code != 0
+    assert "interval must be" in result.output
+
+
 def test_issues_targets_add_duplicate_fails(dbdir: Path, tmp_path: Path) -> None:
     workdir = tmp_path / "repo"
     workdir.mkdir()

@@ -1,4 +1,4 @@
-"""ラベル付き Issue の自動取り込みのテスト。gh の検索は差し替える。"""
+"""ラベル付き Issue の取り込みのテスト。gh の検索は差し替える。"""
 
 from __future__ import annotations
 
@@ -57,6 +57,35 @@ def test_remove_unknown_target_raises(conn, workdir: Path) -> None:  # type: ign
         importer.remove_target(conn, workdir=str(workdir), label="alir")
 
 
+def test_find_target(conn, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+    target = importer.find_target(conn, workdir=str(workdir), label="alir")
+    assert target == importer.ImportTarget(workdir=str(workdir.resolve()), label="alir")
+
+
+def test_find_unknown_target_raises(conn, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ImporterError):
+        importer.find_target(conn, workdir=str(workdir), label="alir")
+
+
+def test_import_interval_defaults_to_disabled(conn) -> None:  # type: ignore[no-untyped-def]
+    assert importer.import_interval(conn) == 0.0
+
+
+def test_set_import_interval(conn) -> None:  # type: ignore[no-untyped-def]
+    importer.set_import_interval(conn, 300)
+    assert importer.import_interval(conn) == 300.0
+    importer.set_import_interval(conn, 0)
+    assert importer.import_interval(conn) == 0.0
+
+
+def test_set_import_interval_rejects_too_short(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ImporterError):
+        importer.set_import_interval(conn, importer.MIN_INTERVAL - 1)
+    with pytest.raises(ImporterError):
+        importer.set_import_interval(conn, -1)
+
+
 def test_run_import_adds_issues_as_queued(conn, workdir: Path) -> None:  # type: ignore[no-untyped-def]
     importer.add_target(conn, workdir=str(workdir), label="alir")
 
@@ -102,6 +131,26 @@ def test_run_import_without_targets_does_not_fetch(conn) -> None:  # type: ignor
     assert outcome.errors == []
     assert outcome.checked == 0
     assert outcome.found == 0
+
+
+def test_run_import_with_targets_searches_only_them(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    first = tmp_path / "first"
+    first.mkdir()
+    second = tmp_path / "second"
+    second.mkdir()
+    importer.add_target(conn, workdir=str(first), label="alir")
+    target = importer.add_target(conn, workdir=str(second), label="alir")
+
+    searched: list[str] = []
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        searched.append(wd)
+        return [{"url": URL, "title": "t"}]
+
+    outcome = importer.run_import(conn, fetch=fetch, targets=[target])
+    assert searched == [str(second.resolve())]
+    assert [i.workdir for i in outcome.imported] == [str(second.resolve())]
+    assert outcome.checked == 1
 
 
 def test_run_import_collects_errors_and_continues(conn, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
