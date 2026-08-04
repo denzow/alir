@@ -1,9 +1,11 @@
-"""ラベル付き Issue の自動取り込み。
+"""ラベル付き Issue の取り込み。
 
 取り込み対象(workdir + ラベル)を control テーブルの KV として持ち、
-ドライバのサイクルから TTL 付きで GitHub を検索して未登録の Issue を
-キュー末尾に登録する。plan.md の原則(ドライバは GitHub を直接検索しない)は
-維持する。検索するのはこの取り込み処理であり、ドライバ本体はレジストリだけを見る。
+GitHub を検索して未登録の Issue をキュー末尾に登録する。
+実行の起点は Web UI の取り込みボタンで、間隔(KEY_IMPORT_INTERVAL)を
+設定したときだけドライバのサイクルからも定期実行する。
+plan.md の原則(ドライバは GitHub を直接検索しない)は維持する。
+検索するのはこの取り込み処理であり、ドライバ本体はレジストリだけを見る。
 """
 
 from __future__ import annotations
@@ -21,8 +23,14 @@ from alir.registry import Issue, RegistryError
 
 KEY_IMPORT_TARGETS = "import_targets"
 
-# ドライバが取り込みを実行する間隔(秒)。この TTL の間は GitHub API を叩かない。
+# ドライバが定期取り込みを実行する間隔(秒)。未設定・0 なら定期取り込みをしない。
+KEY_IMPORT_INTERVAL = "import_interval"
+
+# 定期取り込みを有効にするときの目安の間隔(秒)。Web UI の入力欄の初期値に使う。
 DEFAULT_INTERVAL = 300.0
+
+# 定期取り込みで許す最短の間隔(秒)。gh の呼びすぎを防ぐための下限。
+MIN_INTERVAL = 30.0
 
 Fetch = Callable[[str, str], list[dict[str, str]]]
 
@@ -82,6 +90,36 @@ def add_target(conn: iceql.Connection, *, workdir: str, label: str) -> ImportTar
     return target
 
 
+def find_target(conn: iceql.Connection, *, workdir: str, label: str) -> ImportTarget:
+    """登録済みの取り込み対象を 1 件返す。登録がなければ ImporterError。"""
+    resolved = str(Path(workdir).expanduser().resolve())
+    for target in list_targets(conn):
+        if target.label == label and target.workdir == resolved:
+            return target
+    raise ImporterError(f"target not registered: {label} ({workdir})")
+
+
+def import_interval(conn: iceql.Connection) -> float:
+    """ドライバの定期取り込みの間隔(秒)。0 なら定期取り込みをしない(既定)。"""
+    raw = control.get_value(conn, KEY_IMPORT_INTERVAL)
+    if not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        # 手で書き換えられて壊れていても、勝手に走らせない側に倒す
+        return 0.0
+
+
+def set_import_interval(conn: iceql.Connection, seconds: float) -> None:
+    """定期取り込みの間隔を設定する。0 で定期取り込みを無効にする。"""
+    if seconds < 0:
+        raise ImporterError("interval must be 0 or greater")
+    if 0 < seconds < MIN_INTERVAL:
+        raise ImporterError(f"interval must be 0 or {MIN_INTERVAL:g} seconds or more")
+    control.set_value(conn, KEY_IMPORT_INTERVAL, "" if seconds == 0 else f"{seconds:g}")
+
+
 def remove_target(conn: iceql.Connection, *, workdir: str, label: str) -> None:
     """取り込み対象を削除する。登録がなければ ImporterError。"""
     resolved = str(Path(workdir).expanduser().resolve())
@@ -109,16 +147,23 @@ def fetch_labeled_issues(workdir: str, label: str) -> list[dict[str, str]]:
     ]
 
 
-def run_import(conn: iceql.Connection, *, fetch: Fetch = fetch_labeled_issues) -> ImportOutcome:
-    """全対象を検索し、未登録の Issue をキュー末尾に登録する。
+def run_import(
+    conn: iceql.Connection,
+    *,
+    fetch: Fetch = fetch_labeled_issues,
+    targets: list[ImportTarget] | None = None,
+) -> ImportOutcome:
+    """対象を検索し、未登録の Issue をキュー末尾に登録する。
 
+    targets を渡すとその対象だけを検索する(Web UI の対象ごとの取り込み)。
+    省略時は登録済みの全対象を検索する。
     対象が空なら何もしない(GitHub API も叩かない)。
     レジストリに同じ URL がある Issue は状態を問わずスキップする。
     done / failed でも再登録しないのは、ラベルが付いたままの消化済み Issue を
     サイクルのたびに取り込み直すループを防ぐためである(再実行は人が登録する)。
     1 対象の検索失敗は errors に集めて他の対象の取り込みを続ける。
     """
-    targets = list_targets(conn)
+    targets = list_targets(conn) if targets is None else targets
     if not targets:
         return ImportOutcome(imported=[], errors=[])
     known = {issue.url for issue in registry.list_issues(conn)}

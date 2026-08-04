@@ -20,7 +20,10 @@ $ alir issues add https://github.com/owner/repo/issues/13 --workdir ~/work/repo 
     --mode refine --note "対象は API 層だけにする"
 $ alir issues                       # 一覧
 $ alir issues import --label agent-ready --workdir ~/work/repo   # ラベルで一括取り込み(補助)
-$ alir issues targets add --label agent-ready --workdir ~/work/repo  # ラベルの自動取り込み対象に登録
+# 取り込み対象を登録する(Web UI の取り込みボタンでこの条件の Issue を取り込む)
+$ alir issues targets add --label agent-ready --workdir ~/work/repo
+# ドライバにも定期的に取り込ませたいときだけ間隔を設定する(0 = ボタンのみ、既定)
+$ alir issues targets interval 300
 
 # 直接 push 運用: このリポジトリでは PR を作らず develop に push して開発を続ける
 $ alir push-branch set --workdir ~/work/repo --branch develop

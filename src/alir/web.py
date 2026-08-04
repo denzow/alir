@@ -382,6 +382,9 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
     return {
         "branch_template": settings.branch_template(conn),
         "import_targets": importer.list_targets(conn),
+        "import_interval": importer.import_interval(conn),
+        "import_interval_hint": importer.DEFAULT_INTERVAL,
+        "import_interval_min": importer.MIN_INTERVAL,
         "push_branches": settings.push_branches(conn),
         "workdirs": registry.list_workdirs(conn),
         "pushover_status": notify.pushover_source(conn),
@@ -469,6 +472,81 @@ async def settings_targets_remove(request: Request) -> Response:
     except ImporterError as exc:
         error = str(exc)
     return await _settings_result(request, dbdir, error)
+
+
+def _import_now(dbdir: Path, targets: list[importer.ImportTarget] | None) -> importer.ImportOutcome:
+    """取り込みを実行し、登録できた Issue を稼働ログに残す。
+
+    fetch を明示的に渡すのは、テストから gh の呼び出しを差し替えられるようにするため。
+    """
+    conn = db.connect(dbdir)
+    outcome = importer.run_import(conn, fetch=importer.fetch_labeled_issues, targets=targets)
+    for issue in outcome.imported:
+        control.log_event(conn, f"import #{issue.id} {issue.ref}")
+    return outcome
+
+
+def _import_message(outcome: importer.ImportOutcome) -> tuple[str | None, str]:
+    """取り込み結果を (エラー, 通知) の文言にする。"""
+    error = "; ".join(outcome.errors) or None
+    notice = f"{outcome.found} 件見つかり、{len(outcome.imported)} 件を取り込みました。"
+    return error, notice
+
+
+@router.post("/settings/targets/import")
+async def settings_targets_import(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    label = str(form.get("label") or "").strip()
+
+    def work() -> importer.ImportOutcome:
+        target = importer.find_target(db.connect(dbdir), workdir=workdir, label=label)
+        return _import_now(dbdir, [target])
+
+    error: str | None = None
+    notice: str | None = None
+    try:
+        outcome = await db.run_in_thread(work)
+    except ImporterError as exc:
+        error = str(exc)
+    else:
+        error, notice = _import_message(outcome)
+    return await _settings_result(request, dbdir, error, notice=notice)
+
+
+@router.post("/settings/targets/import-all")
+async def settings_targets_import_all(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    outcome = await db.run_in_thread(lambda: _import_now(dbdir, None))
+    error, notice = _import_message(outcome)
+    return await _settings_result(request, dbdir, error, notice=notice)
+
+
+@router.post("/settings/targets/interval")
+async def settings_targets_interval(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    raw = str(form.get("seconds") or "").strip()
+
+    error: str | None = None
+    notice: str | None = None
+    try:
+        seconds = float(raw or 0)
+    except ValueError:
+        error = f"interval must be a number: {raw}"
+    else:
+        try:
+            await db.run_in_thread(lambda: importer.set_import_interval(db.connect(dbdir), seconds))
+        except ImporterError as exc:
+            error = str(exc)
+        else:
+            notice = (
+                "定期取り込みを無効にしました。"
+                if seconds == 0
+                else f"{seconds:g} 秒ごとに定期取り込みします。"
+            )
+    return await _settings_result(request, dbdir, error, notice=notice)
 
 
 @router.post("/settings/push-branches/set")

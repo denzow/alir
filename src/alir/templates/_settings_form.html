@@ -24,24 +24,40 @@
     <button>保存する</button>
   </form>
 </div>
-<p class="section-label">自動取り込み</p>
+<p class="section-label">Issue の取り込み</p>
 <div class="card add-form">
   <p class="hint">
-    登録した workdir のリポジトリからラベル付きのオープンな Issue を定期的に検索し、
-    未登録のものをキュー末尾へ自動登録する。対象が空なら何もしない。
+    登録した workdir のリポジトリからラベル付きのオープンな Issue を検索し、
+    未登録のものをキュー末尾へ登録する。取り込みボタンを押したときに実行する。
+    間隔を設定すると、ドライバがその間隔でも取り込む。
   </p>
   {% for target in import_targets %}
-  <form method="post" action="/settings/targets/remove"
-        hx-post="/settings/targets/remove" hx-target="#settings" hx-swap="innerHTML"
-        class="target-row">
-    <input type="hidden" name="workdir" value="{{ target.workdir }}">
-    <input type="hidden" name="label" value="{{ target.label }}">
+  <div class="target-row">
     <span class="target-desc"><code>{{ target.label }}</code> {{ target.workdir }}</span>
-    <button>削除</button>
-  </form>
+    <span class="target-actions">
+      <form method="post" action="/settings/targets/import"
+            hx-post="/settings/targets/import" hx-target="#settings" hx-swap="innerHTML">
+        <input type="hidden" name="workdir" value="{{ target.workdir }}">
+        <input type="hidden" name="label" value="{{ target.label }}">
+        <button>取り込み</button>
+      </form>
+      <form method="post" action="/settings/targets/remove"
+            hx-post="/settings/targets/remove" hx-target="#settings" hx-swap="innerHTML">
+        <input type="hidden" name="workdir" value="{{ target.workdir }}">
+        <input type="hidden" name="label" value="{{ target.label }}">
+        <button>削除</button>
+      </form>
+    </span>
+  </div>
   {% else %}
   <p class="empty-inline">取り込み対象はまだありません。</p>
   {% endfor %}
+  {% if import_targets %}
+  <form method="post" action="/settings/targets/import-all"
+        hx-post="/settings/targets/import-all" hx-target="#settings" hx-swap="innerHTML">
+    <button>すべて取り込み</button>
+  </form>
+  {% endif %}
   <form method="post" action="/settings/targets/add"
         hx-post="/settings/targets/add" hx-target="#settings" hx-swap="innerHTML">
     <div class="field">
@@ -57,6 +73,21 @@
       <input id="target-label" type="text" name="label" placeholder="alir">
     </div>
     <button>対象を追加</button>
+  </form>
+  <form method="post" action="/settings/targets/interval"
+        hx-post="/settings/targets/interval" hx-target="#settings" hx-swap="innerHTML">
+    <div class="field">
+      <label for="import-interval">定期取り込み</label>
+      <input id="import-interval" type="number" name="seconds" min="0"
+             step="{{ import_interval_min|int }}" value="{{ import_interval|int }}">
+    </div>
+    <p class="hint">
+      ドライバが取り込みを繰り返す間隔(秒)。<code>0</code> で無効にする(既定)。
+      有効にするなら {{ import_interval_min|int }} 秒以上を指定する
+      (例: <code>{{ import_interval_hint|int }}</code> = {{ (import_interval_hint / 60)|int }} 分)。
+      ドライバが動いていないときはこの設定に関わらず取り込まれない。
+    </p>
+    <button>間隔を保存</button>
   </form>
 </div>
 <p class="section-label">直接 push(PR なし)</p>

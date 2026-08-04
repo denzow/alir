@@ -137,14 +137,41 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     assert statuses == [registry.STATUS_DONE, registry.STATUS_DONE]
 
 
+def test_run_loop_does_not_import_without_interval(dbdir: Path, tmp_path: Path) -> None:
+    """定期取り込みの間隔が未設定なら、対象があってもドライバは検索しない。"""
+    from alir import importer
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(workdir), label="alir")
+
+    def fetch(wd: str, label: str) -> list[dict[str, str]]:
+        raise AssertionError("fetch must not be called")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        import_fetch=fetch,
+        log=logs.append,
+    )
+    assert registry.list_issues(db.connect(dbdir)) == []
+    assert not any("import" in m for m in logs)
+
+
 def test_run_loop_imports_labeled_issues_once_per_ttl(dbdir: Path, tmp_path: Path) -> None:
-    """取り込み対象があればキューへ自動登録され、TTL 内は再検索しない。"""
+    """間隔を設定すればキューへ自動登録され、TTL 内は再検索しない。"""
     from alir import control, importer
 
     workdir = tmp_path / "repo"
     workdir.mkdir()
     conn = db.connect(dbdir)
     importer.add_target(conn, workdir=str(workdir), label="alir")
+    importer.set_import_interval(conn, importer.DEFAULT_INTERVAL)
 
     calls: list[str] = []
 
@@ -182,6 +209,7 @@ def test_run_loop_emits_import_errors(dbdir: Path, tmp_path: Path) -> None:
     workdir.mkdir()
     conn = db.connect(dbdir)
     importer.add_target(conn, workdir=str(workdir), label="alir")
+    importer.set_import_interval(conn, importer.DEFAULT_INTERVAL)
 
     def fetch(wd: str, label: str) -> list[dict[str, str]]:
         raise importer.ImporterError("gh issue list failed: boom")

@@ -602,7 +602,6 @@ def run_loop(
     usage_probe: Callable[[], usage.UsageStatus | None] | None = None,
     usage_check_ttl: float = 300.0,
     usage_threshold: float | None = None,
-    import_interval: float = importer.DEFAULT_INTERVAL,
     import_fetch: importer.Fetch = importer.fetch_labeled_issues,
     pr_status_fetch: ci.PrStatusFetch | None = None,
     ci_check_ttl: float = 300.0,
@@ -622,11 +621,14 @@ def run_loop(
     キャッシュを破棄し、次の開始前に必ず新しい使用率で判定する。
     イベントは events テーブルにも記録し、Web UI から参照できるようにする。
 
-    取り込み対象(importer)が設定されていれば、import_interval 秒ごとに
-    ラベル付き Issue を検索してキュー末尾へ登録する。一時停止中も取り込みは
-    続ける(セッションを開始しないだけで、キューへの登録は無害なため)。
-    実行のたびに確認結果(対象数・発見数・登録数)をログへ 1 行出し、
-    新規ゼロでも稼働していることを確認できるようにする。
+    取り込み(importer)は既定では Web UI のボタンから実行するもので、
+    ドライバは何もしない。取り込み間隔(importer.set_import_interval)が
+    設定されているときだけ、その間隔でラベル付き Issue を検索して
+    キュー末尾へ登録する。間隔の変更は次のサイクルで反映し、
+    有効にした直後は 1 回取り込んでから間隔を測り直す。
+    一時停止中も取り込みは続ける(セッションを開始しないだけで、
+    キューへの登録は無害なため)。実行のたびに確認結果(対象数・発見数・登録数)を
+    ログへ 1 行出し、新規ゼロでも稼働していることを確認できるようにする。
 
     pr_status_fetch(通常は ci.fetch_pr_status)を渡すと、done の Issue の
     PR を ci_check_ttl 秒間隔で確認し、CI が失敗していれば queued に戻す。
@@ -652,7 +654,8 @@ def run_loop(
     last_pause_reason: str | None = None
     probe_status: usage.UsageStatus | None = None
     next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
-    next_import = 0.0  # 自動取り込みの次回実行時刻(monotonic)
+    next_import = 0.0  # 定期取り込みの次回実行時刻(monotonic)
+    import_interval = 0.0  # 直前のサイクルで見た取り込み間隔の設定値
     next_ci_check = 0.0
     resolved_prs: set[str] = set()  # マージ済み・クローズ済みで監視を終えた PR
     if usage_threshold is not None:
@@ -683,7 +686,11 @@ def run_loop(
             for stopped in retried.exhausted:
                 emit(f"retry limit reached #{stopped.id} {stopped.ref}: kept failed, notified")
 
-            if time.monotonic() >= next_import:
+            configured_interval = importer.import_interval(conn)
+            if configured_interval != import_interval:
+                import_interval = configured_interval
+                next_import = 0.0  # 有効にした直後は待たずに 1 回取り込む
+            if import_interval > 0 and time.monotonic() >= next_import:
                 next_import = time.monotonic() + import_interval
                 outcome = importer.run_import(conn, fetch=import_fetch)
                 if outcome.checked:
