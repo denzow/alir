@@ -137,6 +137,19 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     assert statuses == [registry.STATUS_DONE, registry.STATUS_DONE]
 
 
+def test_next_import_at_runs_once_when_enabled() -> None:
+    """無効から有効にしたときは待たずに 1 回取り込む。"""
+    assert driver.next_import_at(0.0, 0.0, 300.0) == 0.0
+
+
+def test_next_import_at_keeps_schedule_when_interval_changes() -> None:
+    """間隔を変えただけなら、前回の実行時刻から新しい間隔で測り直す。"""
+    # 100.0 に実行し、次回は 400.0 の予定。間隔を 600 に延ばすと次回は 700.0
+    assert driver.next_import_at(400.0, 300.0, 600.0) == 700.0
+    # 縮めたときも同じ起点から測る
+    assert driver.next_import_at(400.0, 300.0, 60.0) == 160.0
+
+
 def test_run_loop_does_not_import_without_interval(dbdir: Path, tmp_path: Path) -> None:
     """定期取り込みの間隔が未設定なら、対象があってもドライバは検索しない。"""
     from alir import importer

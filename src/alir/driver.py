@@ -588,6 +588,18 @@ def next_startable(conn: iceql.Connection) -> Issue | None:
     return None
 
 
+def next_import_at(next_import: float, current: float, configured: float) -> float:
+    """取り込み間隔の設定変更を、次回の取り込み時刻(monotonic)に反映する。
+
+    無効(0)から有効にしたときは 0 を返し、待たずに 1 回取り込ませる。
+    間隔だけを変えたときは、前回の実行時刻から新しい間隔で測り直す。
+    設定を保存し直すたびに gh を呼ばないようにするためである。
+    """
+    if current == 0:
+        return 0.0
+    return next_import - current + configured
+
+
 def run_loop(
     dbdir: Path,
     *,
@@ -624,8 +636,8 @@ def run_loop(
     取り込み(importer)は既定では Web UI のボタンから実行するもので、
     ドライバは何もしない。取り込み間隔(importer.set_import_interval)が
     設定されているときだけ、その間隔でラベル付き Issue を検索して
-    キュー末尾へ登録する。間隔の変更は次のサイクルで反映し、
-    有効にした直後は 1 回取り込んでから間隔を測り直す。
+    キュー末尾へ登録する。間隔の変更は次のサイクルで反映する
+    (無効から有効にした直後は 1 回取り込む。next_import_at を参照)。
     一時停止中も取り込みは続ける(セッションを開始しないだけで、
     キューへの登録は無害なため)。実行のたびに確認結果(対象数・発見数・登録数)を
     ログへ 1 行出し、新規ゼロでも稼働していることを確認できるようにする。
@@ -688,8 +700,8 @@ def run_loop(
 
             configured_interval = importer.import_interval(conn)
             if configured_interval != import_interval:
+                next_import = next_import_at(next_import, import_interval, configured_interval)
                 import_interval = configured_interval
-                next_import = 0.0  # 有効にした直後は待たずに 1 回取り込む
             if import_interval > 0 and time.monotonic() >= next_import:
                 next_import = time.monotonic() + import_interval
                 outcome = importer.run_import(conn, fetch=import_fetch)

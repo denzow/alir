@@ -34,7 +34,7 @@
   {% for target in import_targets %}
   <div class="target-row">
     <span class="target-desc"><code>{{ target.label }}</code> {{ target.workdir }}</span>
-    <span class="target-actions">
+    <div class="target-actions">
       <form method="post" action="/settings/targets/import"
             hx-post="/settings/targets/import" hx-target="#settings" hx-swap="innerHTML">
         <input type="hidden" name="workdir" value="{{ target.workdir }}">
@@ -47,7 +47,7 @@
         <input type="hidden" name="label" value="{{ target.label }}">
         <button>削除</button>
       </form>
-    </span>
+    </div>
   </div>
   {% else %}
   <p class="empty-inline">取り込み対象はまだありません。</p>
@@ -78,8 +78,8 @@
         hx-post="/settings/targets/interval" hx-target="#settings" hx-swap="innerHTML">
     <div class="field">
       <label for="import-interval">定期取り込み</label>
-      <input id="import-interval" type="number" name="seconds" min="0"
-             step="{{ import_interval_min|int }}" value="{{ import_interval|int }}">
+      <input id="import-interval" type="number" name="seconds" min="0" step="1"
+             value="{{ import_interval|int }}">
     </div>
     <p class="hint">
       ドライバが取り込みを繰り返す間隔(秒)。<code>0</code> で無効にする(既定)。

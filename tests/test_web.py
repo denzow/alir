@@ -599,25 +599,34 @@ def test_settings_targets_import_all(
     assert res.status_code == 200
     assert searched == [str(first.resolve()), str(second.resolve())]
     # 同じ URL は 2 対象目でスキップされる
-    assert "2 件見つかり、1 件を取り込みました" in res.text
+    assert "2 件が該当し、うち 1 件を取り込みました" in res.text
     assert len(registry.list_issues(db.connect(dbdir))) == 1
 
 
-def test_settings_targets_import_shows_errors(
+def test_settings_targets_import_shows_errors_with_count(
     client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from alir import importer
+    """一部の対象が失敗しても、取り込めた件数はエラーと一緒に表示する。"""
+    from alir import importer, registry
 
-    workdir = tmp_path / "repo"
-    workdir.mkdir()
-    importer.add_target(db.connect(dbdir), workdir=str(workdir), label="alir")
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    ok = tmp_path / "ok"
+    ok.mkdir()
+    conn = db.connect(dbdir)
+    importer.add_target(conn, workdir=str(broken), label="alir")
+    importer.add_target(conn, workdir=str(ok), label="alir")
 
     def fetch(wd: str, label: str) -> list[dict[str, str]]:
-        raise importer.ImporterError("gh issue list failed: boom")
+        if wd == str(broken.resolve()):
+            raise importer.ImporterError("gh issue list failed: boom")
+        return [{"url": "https://github.com/denzow/alir/issues/12"}]
 
     monkeypatch.setattr(importer, "fetch_labeled_issues", fetch)
     res = client.post("/settings/targets/import-all", headers={"HX-Request": "true"})
     assert "boom" in res.text
+    assert "うち 1 件を取り込みました" in res.text
+    assert len(registry.list_issues(db.connect(dbdir))) == 1
 
 
 def test_settings_targets_interval_set_and_disable(client: TestClient, dbdir: Path) -> None:

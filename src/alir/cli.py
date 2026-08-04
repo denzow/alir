@@ -144,7 +144,7 @@ def issues_import(label: str, workdir: Path) -> None:
 @issues_group.group("targets", invoke_without_command=True)
 @click.pass_context
 def issues_targets(ctx: click.Context) -> None:
-    """自動取り込みの対象を操作する。サブコマンドなしなら一覧する。"""
+    """取り込み対象を操作する。サブコマンドなしなら一覧する。"""
     if ctx.invoked_subcommand is None:
         conn = db.connect(data_dir())
         items = importer.list_targets(conn)
@@ -164,7 +164,7 @@ def issues_targets(ctx: click.Context) -> None:
     help="対象リポジトリのローカルパス",
 )
 def targets_add(label: str, workdir: Path) -> None:
-    """自動取り込みの対象(workdir + ラベル)を追加する。"""
+    """取り込み対象(workdir + ラベル)を追加する。Web UI の取り込みボタンで使う。"""
     conn = db.connect(data_dir())
     try:
         target = importer.add_target(conn, workdir=str(workdir), label=label)
@@ -182,7 +182,7 @@ def targets_add(label: str, workdir: Path) -> None:
     help="対象リポジトリのローカルパス",
 )
 def targets_remove(label: str, workdir: Path) -> None:
-    """自動取り込みの対象を削除する。"""
+    """取り込み対象を削除する。"""
     conn = db.connect(data_dir())
     try:
         importer.remove_target(conn, workdir=str(workdir), label=label)

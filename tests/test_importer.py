@@ -1,4 +1,4 @@
-"""ラベル付き Issue の自動取り込みのテスト。gh の検索は差し替える。"""
+"""ラベル付き Issue の取り込みのテスト。gh の検索は差し替える。"""
 
 from __future__ import annotations
 

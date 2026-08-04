@@ -7,6 +7,7 @@ htmx はベンダリングした静的ファイルとして配信し、外部 CD
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
@@ -474,23 +475,29 @@ async def settings_targets_remove(request: Request) -> Response:
     return await _settings_result(request, dbdir, error)
 
 
-def _import_now(dbdir: Path, targets: list[importer.ImportTarget] | None) -> importer.ImportOutcome:
+def _import_now(conn: Any, targets: list[importer.ImportTarget] | None) -> importer.ImportOutcome:
     """取り込みを実行し、登録できた Issue を稼働ログに残す。
 
     fetch を明示的に渡すのは、テストから gh の呼び出しを差し替えられるようにするため。
     """
-    conn = db.connect(dbdir)
     outcome = importer.run_import(conn, fetch=importer.fetch_labeled_issues, targets=targets)
     for issue in outcome.imported:
-        control.log_event(conn, f"import #{issue.id} {issue.ref}")
+        # ログの永続化に失敗しても、取り込んだ結果は画面に返す
+        with contextlib.suppress(Exception):
+            control.log_event(conn, f"import #{issue.id} {issue.ref}")
     return outcome
 
 
-def _import_message(outcome: importer.ImportOutcome) -> tuple[str | None, str]:
-    """取り込み結果を (エラー, 通知) の文言にする。"""
-    error = "; ".join(outcome.errors) or None
-    notice = f"{outcome.found} 件見つかり、{len(outcome.imported)} 件を取り込みました。"
-    return error, notice
+def _import_message(outcome: importer.ImportOutcome) -> tuple[str | None, str | None]:
+    """取り込み結果を (エラー, 通知) の文言にする。
+
+    一部の対象だけが失敗しても取り込めた件数は伝わるように、
+    エラーがあるときは件数もエラー側の文言に含める(通知は表示されないため)。
+    """
+    summary = f"{outcome.found} 件が該当し、うち {len(outcome.imported)} 件を取り込みました。"
+    if outcome.errors:
+        return f"{summary} 失敗: {'; '.join(outcome.errors)}", None
+    return None, summary
 
 
 @router.post("/settings/targets/import")
@@ -501,8 +508,9 @@ async def settings_targets_import(request: Request) -> Response:
     label = str(form.get("label") or "").strip()
 
     def work() -> importer.ImportOutcome:
-        target = importer.find_target(db.connect(dbdir), workdir=workdir, label=label)
-        return _import_now(dbdir, [target])
+        conn = db.connect(dbdir)
+        target = importer.find_target(conn, workdir=workdir, label=label)
+        return _import_now(conn, [target])
 
     error: str | None = None
     notice: str | None = None
@@ -518,7 +526,7 @@ async def settings_targets_import(request: Request) -> Response:
 @router.post("/settings/targets/import-all")
 async def settings_targets_import_all(request: Request) -> Response:
     dbdir = request.app.state.dbdir
-    outcome = await db.run_in_thread(lambda: _import_now(dbdir, None))
+    outcome = await db.run_in_thread(lambda: _import_now(db.connect(dbdir), None))
     error, notice = _import_message(outcome)
     return await _settings_result(request, dbdir, error, notice=notice)
 

@@ -32,6 +32,9 @@ DEFAULT_INTERVAL = 300.0
 # 定期取り込みで許す最短の間隔(秒)。gh の呼びすぎを防ぐための下限。
 MIN_INTERVAL = 30.0
 
+# 1 対象あたりの gh issue list を待つ上限(秒)。
+FETCH_TIMEOUT = 60.0
+
 Fetch = Callable[[str, str], list[dict[str, str]]]
 
 
@@ -131,14 +134,22 @@ def remove_target(conn: iceql.Connection, *, workdir: str, label: str) -> None:
 
 
 def fetch_labeled_issues(workdir: str, label: str) -> list[dict[str, str]]:
-    """gh CLI でラベル付きのオープンな Issue を検索する。"""
-    proc = subprocess.run(
-        ["gh", "issue", "list", "--label", label, "--json", "url,title", "--limit", "100"],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    """gh CLI でラベル付きのオープンな Issue を検索する。
+
+    Web UI の取り込みボタンからも呼ぶため、gh が応答しないときに
+    リクエストが返らなくならないよう時間で打ち切る。
+    """
+    try:
+        proc = subprocess.run(
+            ["gh", "issue", "list", "--label", label, "--json", "url,title", "--limit", "100"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=FETCH_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ImporterError(f"gh issue list timed out after {FETCH_TIMEOUT:g}s") from exc
     if proc.returncode != 0:
         raise ImporterError(f"gh issue list failed: {proc.stderr.strip()}")
     return [
