@@ -26,16 +26,19 @@ def client(dbdir: Path) -> TestClient:
     return TestClient(create_app(dbdir))
 
 
-def _ask(dbdir: Path) -> None:
+def _ask(
+    dbdir: Path, *, question: str = "DB スキーマを変更してよいか", parent_id: int | None = None
+) -> None:
     conn = db.connect(dbdir)
     questions.ask(
         conn,
         issue="denzow/alir#1",
-        question="DB スキーマを変更してよいか",
+        question=question,
         options=["変更する", "変更しない"],
         recommended="変更する",
         impact="high",
         timeout_action="keep_parked",
+        parent_id=parent_id,
     )
 
 
@@ -88,6 +91,48 @@ def test_answered_question_visible_with_all(client: TestClient, dbdir: Path) -> 
     res = client.get("/?all=1")
     assert "st-answered" in res.text
     assert "変更する" in res.text
+
+
+def test_return_question_marks_returned(client: TestClient, dbdir: Path) -> None:
+    _ask(dbdir)
+    res = client.post(
+        "/questions/1/return", data={"text": "既存データも対象か?"}, follow_redirects=True
+    )
+    assert res.status_code == 200
+    conn = db.connect(dbdir)
+    q = questions.get(conn, 1)
+    assert q.status == questions.STATUS_RETURNED
+    assert q.answer == "既存データも対象か?"
+
+
+def test_return_question_empty_text_shows_error(client: TestClient, dbdir: Path) -> None:
+    _ask(dbdir)
+    res = client.post("/questions/1/return", data={"text": " "}, follow_redirects=True)
+    assert "clarification text is empty" in res.text
+    conn = db.connect(dbdir)
+    assert questions.get(conn, 1).status == questions.STATUS_OPEN
+
+
+def test_thread_shown_in_one_card(client: TestClient, dbdir: Path) -> None:
+    _ask(dbdir)
+    client.post("/questions/1/return", data={"text": "既存データも対象か?"})
+    _ask(dbdir, question="既存データも含めて変更してよいか", parent_id=1)
+    res = client.get("/")
+    # 再質問だけが open なので既定の一覧に出る。元の質問と確認も同じカードに並ぶ
+    assert res.text.count('<div class="card st-') == 1
+    assert "DB スキーマを変更してよいか" in res.text
+    assert "既存データも対象か?" in res.text
+    assert "既存データも含めて変更してよいか" in res.text
+    assert "再質問 #2" in res.text
+
+
+def test_returned_thread_hidden_until_reasked(client: TestClient, dbdir: Path) -> None:
+    _ask(dbdir)
+    client.post("/questions/1/return", data={"text": "既存データも対象か?"})
+    res = client.get("/")
+    assert "未回答の質問はありません" in res.text
+    res = client.get("/?all=1")
+    assert "st-returned" in res.text
 
 
 URL = "https://github.com/denzow/alir/issues/12"

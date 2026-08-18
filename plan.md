@@ -48,17 +48,23 @@ iceql のデータディレクトリ（質問 DB と Issue レジストリ）は
 - **issue**：対象 Issue（リポジトリ + 番号）。
 - **session_id**：質問時の Claude Code セッション ID（`--resume` 最適化用）。
 - **question / options / recommended / impact / timeout_action**：質問本体。
-- **status**：open / answered / expired。
-- **answer / answered_at**：人間の回答。
+- **status**：open / answered / expired / returned。
+- **answer / answered_at**：人間の回答。returned の場合は回答の代わりに返された確認（逆質問）のテキスト。
 - **created_at**：質問日時。
+- **parent_id**：差し戻し後の再質問で元の質問を指す。この連なりを Web UI と CLI はスレッドとして表示する。
+
+回答者が選択肢を選べないとき（前提が曖昧、選択肢の意味が判断できない等）は、回答の代わりに確認（逆質問）を返して質問を差し戻せる。
+差し戻しも「回答が付いた」とみなされて parked の Issue は queued に戻り、再開したセッションが確認に答える内容を含めて `parent_question_id` 付きで質問を登録し直す。
+この往復は何回でも繰り返せる。
 
 インターフェースは 3 つ用意する。
 
 - **MCP ツール**：Claude Code から呼ぶ `ask_human`。
   パラメータ（question, options, recommended, impact, timeout_action）をすべて必須とし、質問を INSERT して即座に成功を返す。
 - **CLI**：人間が使う回答登録コマンド。
-  未回答一覧の表示（`alir questions`）と回答の登録（`alir answer <id> <choice> [補足]`）を行う。
-- **Web UI**：未回答質問の一覧を表示し、選択肢のボタンと補足テキストで回答を登録する画面。
+  未回答一覧の表示（`alir questions`）、回答の登録（`alir answer <id> <choice> [補足]`）、確認の差し戻し（`alir clarify <id> <確認テキスト>`）を行う。
+- **Web UI**：未回答質問の一覧をスレッド単位で表示し、選択肢のボタンと補足テキストで回答を登録する画面。
+  回答できない質問には「確認を返す」で確認（逆質問）を返して差し戻せる。
   htmx などの軽量構成とし、LAN 内のスマホからアクセスできるようにする。
   選択肢のタップだけで回答が完了する形にする。
 

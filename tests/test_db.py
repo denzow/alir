@@ -175,3 +175,31 @@ def test_migrate_adds_outcome_column(tmp_path: Path) -> None:
 
     conn = db.connect(dbdir)
     assert reports.list_reports(conn)[0].outcome == "implemented"
+
+
+def test_migrate_adds_parent_id_column(tmp_path: Path) -> None:
+    """parent_id 列のない既存 questions テーブルに接続すると列が追加される。"""
+    import iceql
+
+    dbdir = tmp_path / "data"
+    dbdir.mkdir(parents=True)
+    old = iceql.connect(dbdir)
+    old.execute(
+        "CREATE TABLE questions (id INTEGER PRIMARY KEY, issue TEXT NOT NULL, "
+        "session_id TEXT, question TEXT NOT NULL, options TEXT NOT NULL, "
+        "recommended TEXT NOT NULL, impact TEXT NOT NULL, timeout_action TEXT NOT NULL, "
+        "status TEXT NOT NULL, answer TEXT, answer_note TEXT, created_at TEXT NOT NULL, "
+        "answered_at TEXT)"
+    )
+    old.execute(
+        "INSERT INTO questions (id, issue, session_id, question, options, recommended, "
+        "impact, timeout_action, status, answer, answer_note, created_at, answered_at) "
+        "VALUES (1, 'a#1', NULL, 'q', '[\"a\", \"b\"]', 'a', 'high', 'keep_parked', "
+        "'open', NULL, NULL, 't', NULL)"
+    )
+    old.close()
+
+    from alir import questions
+
+    conn = db.connect(dbdir)
+    assert questions.get(conn, 1).parent_id is None

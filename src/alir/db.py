@@ -36,7 +36,8 @@ CREATE TABLE questions (
     answer TEXT,
     answer_note TEXT,
     created_at TEXT NOT NULL,
-    answered_at TEXT
+    answered_at TEXT,
+    parent_id INTEGER
 )
 """,
     "runs": """
@@ -115,6 +116,7 @@ _ADDITIONS = (
     ("issues", "origin", "ALTER TABLE issues ADD COLUMN origin TEXT"),
     ("issues", "retries", "ALTER TABLE issues ADD COLUMN retries INTEGER"),
     ("reports", "outcome", "ALTER TABLE reports ADD COLUMN outcome TEXT"),
+    ("questions", "parent_id", "ALTER TABLE questions ADD COLUMN parent_id INTEGER"),
 )
 
 

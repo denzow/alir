@@ -25,6 +25,7 @@
   --c-done: #2e8b57;
   --c-failed: #c4434c;
   --c-expired: #808a94;
+  --c-returned: #b3589a;
   --focus: #b0791a;
 }
 @media (prefers-color-scheme: dark) {
@@ -45,6 +46,7 @@
     --c-done: #5dc98a;
     --c-failed: #e8646c;
     --c-expired: #6d7884;
+    --c-returned: #e08cc8;
     --focus: #f0b445;
   }
 }
@@ -116,6 +118,7 @@ h1 { font-size: 1.05rem; font-weight: 650; margin: 0.4rem 0 0.2rem; }
 .st-done { --st: var(--c-done); }
 .st-failed { --st: var(--c-failed); }
 .st-expired { --st: var(--c-expired); }
+.st-returned { --st: var(--c-returned); }
 
 .card-top {
   display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
@@ -201,6 +204,13 @@ button:hover { border-color: var(--accent); }
   font-size: 0.7rem; color: var(--muted); letter-spacing: 0.05em;
 }
 .answer-block .note { color: var(--muted); font-size: 0.85rem; }
+.answer-block.returned .label { color: var(--c-returned); }
+
+.thread-item + .thread-item {
+  border-top: 1px dashed var(--line);
+  margin-top: 0.8rem; padding-top: 0.7rem;
+}
+.return-form { margin-top: 0.5rem; }
 
 .issue-title { margin: 0.5rem 0 0.05rem; font-weight: 600; }
 .issue-ref { font-family: ui-monospace, "SF Mono", Consolas, monospace;

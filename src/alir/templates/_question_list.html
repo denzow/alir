@@ -1,40 +1,53 @@
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
-{% for q in items %}
-<div class="card st-{{ q.status }}">
+{% for thread in threads %}
+{% set last = thread[-1] %}
+<div class="card st-{{ last.status }}">
   <div class="card-top">
-    <span class="status">{{ q.status }}</span>
-    <span>#{{ q.id }}</span>
-    <span>{{ q.issue }}</span>
+    <span class="status">{{ last.status }}</span>
+    <span>#{{ thread[0].id }}</span>
+    <span>{{ last.issue }}</span>
   </div>
-  <p class="question">{{ q.question }}</p>
-  <p class="detail">impact {{ q.impact }} · timeout {{ q.timeout_action }}
-    · {{ q.created_at | localtime }}</p>
-  {% if q.status == "open" %}
-  <form method="post" action="/questions/{{ q.id }}/answer"
-        hx-post="/questions/{{ q.id }}/answer" hx-target="#questions" hx-swap="innerHTML">
-    <input type="hidden" name="show_all" value="{{ '1' if show_all else '' }}">
-    <div class="options">
-      {% for option in q.options %}
-      <button name="choice" value="{{ loop.index }}"
-              {% if option == q.recommended %}class="recommended"{% endif %}>
-        <span>{{ option }}</span>
-        {% if option == q.recommended %}<span class="tag">推奨</span>{% endif %}
-      </button>
-      {% endfor %}
+  {% for q in thread %}
+  <div class="thread-item">
+    <p class="question">{% if not loop.first %}<span class="tag">再質問 #{{ q.id }}</span> {% endif %}{{ q.question }}</p>
+    <p class="detail">impact {{ q.impact }} · timeout {{ q.timeout_action }}
+      · {{ q.created_at | localtime }}</p>
+    {% if q.status == "open" %}
+    <form method="post" action="/questions/{{ q.id }}/answer"
+          hx-post="/questions/{{ q.id }}/answer" hx-target="#questions" hx-swap="innerHTML">
+      <input type="hidden" name="show_all" value="{{ '1' if show_all else '' }}">
+      <div class="options">
+        {% for option in q.options %}
+        <button name="choice" value="{{ loop.index }}"
+                {% if option == q.recommended %}class="recommended"{% endif %}>
+          <span>{{ option }}</span>
+          {% if option == q.recommended %}<span class="tag">推奨</span>{% endif %}
+        </button>
+        {% endfor %}
+      </div>
+      <input type="text" name="note" placeholder="補足があれば入力 (任意)">
+      <div class="free">
+        <input type="text" name="free" placeholder="自由記述で回答">
+        <button name="choice" value="free">回答する</button>
+      </div>
+    </form>
+    <form class="return-form" method="post" action="/questions/{{ q.id }}/return"
+          hx-post="/questions/{{ q.id }}/return" hx-target="#questions" hx-swap="innerHTML">
+      <input type="hidden" name="show_all" value="{{ '1' if show_all else '' }}">
+      <div class="free">
+        <input type="text" name="text" placeholder="回答せず確認(逆質問)を返す">
+        <button>確認を返す</button>
+      </div>
+    </form>
+    {% else %}
+    <div class="answer-block{% if q.status == 'returned' %} returned{% endif %}">
+      <span class="label">{% if q.status == "returned" %}確認{% else %}answer{% endif %}</span>
+      <div>{{ q.answer }}</div>
+      {% if q.answer_note %}<div class="note">{{ q.answer_note }}</div>{% endif %}
     </div>
-    <input type="text" name="note" placeholder="補足があれば入力 (任意)">
-    <div class="free">
-      <input type="text" name="free" placeholder="自由記述で回答">
-      <button name="choice" value="free">回答する</button>
-    </div>
-  </form>
-  {% else %}
-  <div class="answer-block">
-    <span class="label">answer</span>
-    <div>{{ q.answer }}</div>
-    {% if q.answer_note %}<div class="note">{{ q.answer_note }}</div>{% endif %}
+    {% endif %}
   </div>
-  {% endif %}
+  {% endfor %}
 </div>
 {% else %}
 <p class="empty">未回答の質問はありません。<br>エージェントが判断を求めるとここに届きます。</p>

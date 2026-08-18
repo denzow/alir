@@ -68,6 +68,18 @@ def test_requeue_answered_moves_parked_to_queued(dbdir: Path) -> None:
     assert registry.get(conn, issue.id).status == registry.STATUS_QUEUED
 
 
+def test_requeue_answered_treats_returned_as_answered(dbdir: Path) -> None:
+    """確認(逆質問)の差し戻しも回答とみなし、parked の Issue を queued に戻す。"""
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir="/tmp")
+    registry.set_status(conn, issue.id, registry.STATUS_PARKED)
+    q = _ask(conn)
+    questions.return_question(conn, q.id, "既存データも対象か?")
+    requeued = resume.requeue_answered(conn)
+    assert [i.id for i in requeued] == [issue.id]
+    assert registry.get(conn, issue.id).status == registry.STATUS_QUEUED
+
+
 def test_requeue_skips_while_question_open(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     issue = registry.add(conn, url=URL, workdir="/tmp")

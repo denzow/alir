@@ -43,6 +43,14 @@ def test_ask_human_tool_rejects_invalid_input(conn) -> None:  # type: ignore[no-
         mcp_server.ask_human_tool(conn, **params)
 
 
+def test_ask_human_tool_links_parent_question(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(notify, "notify_question", lambda q: None)
+    mcp_server.ask_human_tool(conn, **_params())
+    questions.return_question(conn, 1, "既存データも対象か?")
+    result = mcp_server.ask_human_tool(conn, **_params(), parent_question_id=1)
+    assert questions.get(conn, result["question_id"]).parent_id == 1
+
+
 def test_enqueue_issue_tool_queues_with_inherited_workdir(conn, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     from alir import control, registry
 

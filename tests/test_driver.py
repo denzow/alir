@@ -124,6 +124,48 @@ def test_prompt_includes_answers_on_resume(dbdir: Path) -> None:
     assert "互換性を守る" in prompt
 
 
+def _ask_q(conn, parent_id: int | None = None):  # type: ignore[no-untyped-def]
+    return questions.ask(
+        conn,
+        issue="denzow/alir#12",
+        question="スキーマを変えてよいか",
+        options=["変える", "変えない"],
+        recommended="変える",
+        impact="high",
+        timeout_action="keep_parked",
+        parent_id=parent_id,
+    )
+
+
+def test_prompt_instructs_reask_when_last_question_returned(dbdir: Path) -> None:
+    issue = _add_issue(dbdir)
+    conn = db.connect(dbdir)
+    _ask_q(conn)
+    questions.return_question(conn, 1, "既存データも対象か?")
+
+    runner = _runner(RunResult(exit_code=0, session_id="sess-2", output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "確認(回答ではない): 既存データも対象か?" in prompt
+    assert "parent_question_id パラメータに 1 を渡し" in prompt
+
+
+def test_prompt_omits_reask_when_last_question_answered(dbdir: Path) -> None:
+    # 差し戻し → 再質問 → 回答済み。再質問の指示は入らず、履歴として確認は残る
+    issue = _add_issue(dbdir)
+    conn = db.connect(dbdir)
+    _ask_q(conn)
+    questions.return_question(conn, 1, "既存データも対象か?")
+    _ask_q(conn, parent_id=1)
+    questions.answer(conn, 2, "1")
+
+    runner = _runner(RunResult(exit_code=0, session_id="sess-2", output="ok"))
+    driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
+    prompt = runner.prompts[0]  # type: ignore[attr-defined]
+    assert "確認(回答ではない): 既存データも対象か?" in prompt
+    assert "parent_question_id" not in prompt
+
+
 def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     registry.add(conn, url=URL, workdir="/tmp/a")

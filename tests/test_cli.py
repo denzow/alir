@@ -66,6 +66,50 @@ def test_answer_unknown_id_fails(dbdir: Path) -> None:
     assert "not found" in result.output
 
 
+def test_clarify_returns_question(dbdir: Path) -> None:
+    _ask(dbdir)
+    result = CliRunner().invoke(main, ["clarify", "1", "既存データも対象か?"])
+    assert result.exit_code == 0
+    assert "returned #1: 既存データも対象か?" in result.output
+
+    # 差し戻し済みのスレッドはセッションの再質問待ちなので既定の一覧に出ない
+    result = CliRunner().invoke(main, ["questions"])
+    assert "no questions" in result.output
+
+    result = CliRunner().invoke(main, ["questions", "--all"])
+    assert "[returned]" in result.output
+    assert "確認: 既存データも対象か?" in result.output
+
+
+def test_clarify_answered_question_fails(dbdir: Path) -> None:
+    _ask(dbdir)
+    CliRunner().invoke(main, ["answer", "1", "1"])
+    result = CliRunner().invoke(main, ["clarify", "1", "確認したい"])
+    assert result.exit_code != 0
+    assert "already answered" in result.output
+
+
+def test_questions_shows_thread_with_indent(dbdir: Path) -> None:
+    _ask(dbdir)
+    CliRunner().invoke(main, ["clarify", "1", "既存データも対象か?"])
+    conn = db.connect(dbdir)
+    questions.ask(
+        conn,
+        issue="denzow/alir#1",
+        question="既存データも含めて変更してよいか",
+        options=["変更する", "変更しない"],
+        recommended="変更する",
+        impact="high",
+        timeout_action="keep_parked",
+        parent_id=1,
+    )
+    result = CliRunner().invoke(main, ["questions"])
+    assert result.exit_code == 0
+    assert "#1 [returned] denzow/alir#1" in result.output
+    assert "  ↳ #2 [open] 再質問" in result.output
+    assert "  確認: 既存データも対象か?" in result.output
+
+
 def test_issues_targets_add_list_remove(dbdir: Path, tmp_path: Path) -> None:
     workdir = tmp_path / "repo"
     workdir.mkdir()

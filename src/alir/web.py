@@ -120,9 +120,8 @@ def _is_htmx(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
 
 
-def _list_questions(dbdir: Path, *, show_all: bool) -> list[Question]:
-    status = None if show_all else questions.STATUS_OPEN
-    return questions.list_questions(db.connect(dbdir), status=status)
+def _list_threads(dbdir: Path, *, show_all: bool) -> list[list[Question]]:
+    return questions.list_threads(db.connect(dbdir), only_active=not show_all)
 
 
 def _render(
@@ -142,9 +141,22 @@ def _render(
 async def index(request: Request) -> Response:
     show_all = request.query_params.get("all") == "1"
     dbdir = request.app.state.dbdir
-    items = await db.run_in_thread(lambda: _list_questions(dbdir, show_all=show_all))
-    context = {"items": items, "show_all": show_all, "error": request.query_params.get("error")}
+    threads = await db.run_in_thread(lambda: _list_threads(dbdir, show_all=show_all))
+    context = {"threads": threads, "show_all": show_all, "error": request.query_params.get("error")}
     return _render(request, "questions.html", context)
+
+
+async def _question_list_response(
+    request: Request, dbdir: Path, *, show_all: bool, error: str | None
+) -> Response:
+    """回答・差し戻し後の共通応答。htmx なら一覧の断片、通常 POST ならリダイレクト。"""
+    if _is_htmx(request):
+        threads = await db.run_in_thread(lambda: _list_threads(dbdir, show_all=show_all))
+        context = {"threads": threads, "show_all": show_all, "error": error}
+        return _render(request, "_question_list.html", context, fragment="_question_list.html")
+    if error:
+        return RedirectResponse(f"/?error={quote(error)}", 303)
+    return RedirectResponse("/", 303)
 
 
 @router.post("/questions/{qid}/answer")
@@ -167,14 +179,23 @@ async def answer_question(request: Request, qid: int) -> Response:
             )
         except QuestionError as exc:
             error = str(exc)
+    return await _question_list_response(request, dbdir, show_all=show_all, error=error)
 
-    if _is_htmx(request):
-        items = await db.run_in_thread(lambda: _list_questions(dbdir, show_all=show_all))
-        context = {"items": items, "show_all": show_all, "error": error}
-        return _render(request, "_question_list.html", context, fragment="_question_list.html")
-    if error:
-        return RedirectResponse(f"/?error={quote(error)}", 303)
-    return RedirectResponse("/", 303)
+
+@router.post("/questions/{qid}/return")
+async def return_question(request: Request, qid: int) -> Response:
+    """回答の代わりに確認(逆質問)を返し、質問を差し戻す。"""
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    text = str(form.get("text") or "").strip()
+    show_all = str(form.get("show_all") or "") == "1"
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(lambda: questions.return_question(db.connect(dbdir), qid, text))
+    except QuestionError as exc:
+        error = str(exc)
+    return await _question_list_response(request, dbdir, show_all=show_all, error=error)
 
 
 def _reports_by_entry(conn: Any, issues: list[Any]) -> dict[int, Any]:

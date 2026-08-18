@@ -41,30 +41,41 @@ def main() -> None:
     """Claude Code の自律ループを支える非同期判断サービス。"""
 
 
-def _format_question(q: Question) -> str:
-    lines = [f"#{q.id} [{q.status}] {q.issue} (impact: {q.impact})"]
-    lines.append(f"  Q: {q.question}")
+def _format_question(q: Question, *, indent: str = "") -> str:
+    if q.parent_id is None:
+        lines = [f"{indent}#{q.id} [{q.status}] {q.issue} (impact: {q.impact})"]
+    else:
+        lines = [f"{indent}↳ #{q.id} [{q.status}] 再質問 (impact: {q.impact})"]
+    lines.append(f"{indent}  Q: {q.question}")
     for i, option in enumerate(q.options, start=1):
         mark = "*" if option == q.recommended else " "
-        lines.append(f"  {mark}{i}) {option}")
-    lines.append(f"  timeout: {q.timeout_action}")
+        lines.append(f"{indent}  {mark}{i}) {option}")
+    lines.append(f"{indent}  timeout: {q.timeout_action}")
     if q.answer is not None:
-        note = f" ({q.answer_note})" if q.answer_note else ""
-        lines.append(f"  A: {q.answer}{note}")
+        if q.status == questions.STATUS_RETURNED:
+            lines.append(f"{indent}  確認: {q.answer}")
+        else:
+            note = f" ({q.answer_note})" if q.answer_note else ""
+            lines.append(f"{indent}  A: {q.answer}{note}")
     return "\n".join(lines)
+
+
+def _format_thread(thread: list[Question]) -> str:
+    return "\n".join(
+        _format_question(q, indent="" if q is thread[0] else "  ") for q in thread
+    )
 
 
 @main.command("questions")
 @click.option("--all", "show_all", is_flag=True, help="回答済み・期限切れも含めて表示する")
 def questions_cmd(show_all: bool) -> None:
-    """質問を一覧する(既定は未回答のみ)。"""
+    """質問をスレッド単位で一覧する(既定は未回答のみ)。"""
     conn = db.connect(data_dir())
-    status = None if show_all else questions.STATUS_OPEN
-    items = questions.list_questions(conn, status=status)
-    if not items:
+    threads = questions.list_threads(conn, only_active=not show_all)
+    if not threads:
         click.echo("no questions")
         return
-    click.echo("\n\n".join(_format_question(q) for q in items))
+    click.echo("\n\n".join(_format_thread(t) for t in threads))
 
 
 @main.command("answer")
@@ -82,6 +93,23 @@ def answer_cmd(question_id: int, choice: str, note: str | None) -> None:
     except QuestionError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"answered #{q.id}: {q.answer}")
+
+
+@main.command("clarify")
+@click.argument("question_id", type=int)
+@click.argument("text")
+def clarify_cmd(question_id: int, text: str) -> None:
+    """質問に回答せず、確認(逆質問)を返して差し戻す。
+
+    差し戻された質問は再開したセッションに渡り、確認に答える内容を含めて
+    質問が登録し直される。
+    """
+    conn = db.connect(data_dir())
+    try:
+        q = questions.return_question(conn, question_id, text)
+    except QuestionError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"returned #{q.id}: {q.answer}")
 
 
 @main.command("mcp")

@@ -354,9 +354,24 @@ def build_prompt(
     if answers:
         lines += ["", "過去の質問への回答(これを前提に続行する):"]
         for q in answers:
-            note = f"(補足: {q.answer_note})" if q.answer_note else ""
-            lines.append(f"- Q: {q.question}")
-            lines.append(f"  A: {q.answer} {note}".rstrip())
+            lines.append(f"- Q(#{q.id}): {q.question}")
+            if q.status == questions.STATUS_RETURNED:
+                lines.append(f"  確認(回答ではない): {q.answer}")
+            else:
+                note = f"(補足: {q.answer_note})" if q.answer_note else ""
+                lines.append(f"  A: {q.answer} {note}".rstrip())
+        last = max(answers, key=lambda q: q.id)
+        if last.status == questions.STATUS_RETURNED:
+            lines += [
+                "",
+                f"直近の質問(#{last.id})には回答ではなく、回答者からの確認(逆質問)が返っている。",
+                "確認に答える内容(前提・背景)を question に含めたうえで、ask_human MCP ツールで",
+                f"質問を登録し直すこと。その際 parent_question_id パラメータに {last.id} を渡し、",
+                "元の質問と同じスレッドに紐づける。選択肢や推奨案は確認を踏まえて見直してよい。",
+                "質問は回答者がスレッドを遡らなくても判断できる自己完結の文にする。",
+                "確認によって人間の判断そのものが不要になった場合(質問が誤解に基づいていた等)に",
+                "限り、再質問せず作業を続行してよい。",
+            ]
     return "\n".join(lines)
 
 

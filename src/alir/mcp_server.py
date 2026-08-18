@@ -49,6 +49,7 @@ def ask_human_tool(
     impact: str,
     timeout_action: str,
     session_id: str | None = None,
+    parent_question_id: int | None = None,
 ) -> dict[str, Any]:
     """質問を登録し、登録結果を返す。"""
     q = questions.ask(
@@ -60,6 +61,7 @@ def ask_human_tool(
         impact=impact,
         timeout_action=timeout_action,
         session_id=session_id,
+        parent_id=parent_question_id,
     )
     notify.notify_question(q)
     return {
@@ -167,6 +169,7 @@ def create_server(dbdir: str | Path) -> Any:
         impact: str,
         timeout_action: str,
         session_id: str | None = None,
+        parent_question_id: int | None = None,
     ) -> dict[str, Any]:
         """Register a question for a human to answer asynchronously.
 
@@ -183,6 +186,9 @@ def create_server(dbdir: str | Path) -> Any:
             timeout_action: What to do if unanswered for the configured period:
                 "proceed_with_recommended" or "keep_parked".
             session_id: Claude Code session id, if known (enables resume).
+            parent_question_id: When re-asking after a human returned a
+                clarifying question instead of an answer, the id of the
+                original question. Links the exchange into one thread.
 
         Returns immediately; do not wait for the answer.
         """
@@ -195,6 +201,7 @@ def create_server(dbdir: str | Path) -> Any:
             impact=impact,
             timeout_action=timeout_action,
             session_id=session_id,
+            parent_question_id=parent_question_id,
         )
 
     @server.tool()
