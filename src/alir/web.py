@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 from alir import (
     control,
     db,
+    driver,
     importer,
     notify,
     progress,
@@ -230,14 +231,34 @@ def _issues_context(conn: Any) -> dict[str, Any]:
     }
 
 
-def _history_context(conn: Any) -> dict[str, Any]:
+def _resume_command(conn: Any, dbdir: Path, issue: Any) -> str | None:
+    """セッションを別ターミナルで手動 resume するコマンドを組み立てる。
+
+    終了したセッションを人間が開いて中を見たり続きを指示したりするための
+    補助表示。MCP ツールも使えるよう、ドライバが書いた mcp.json を渡す。
+    worktree が既に消えていることもあるので目安に留める。
+    """
+    if issue.session_id is None:
+        return None
+    push = settings.push_branch(conn, issue.workdir)
+    branch = issue.branch or push or ""
+    path = driver.worktree_path(issue, branch, push=push is not None)
+    return f"cd {path} && claude --resume {issue.session_id} --mcp-config {dbdir / 'mcp.json'}"
+
+
+def _history_context(conn: Any, dbdir: Path) -> dict[str, Any]:
     finished = [
         i
         for i in registry.list_issues(conn)
         if i.status in (registry.STATUS_DONE, registry.STATUS_FAILED)
     ]
     finished.sort(key=lambda i: i.updated_at, reverse=True)
-    return {"items": finished, "reports": _reports_by_entry(conn, finished)}
+    commands = {i.id: _resume_command(conn, dbdir, i) for i in finished}
+    return {
+        "items": finished,
+        "reports": _reports_by_entry(conn, finished),
+        "resume_commands": {iid: cmd for iid, cmd in commands.items() if cmd is not None},
+    }
 
 
 @router.get("/issues")
@@ -316,7 +337,7 @@ async def issues_reorder(request: Request) -> Response:
 @router.get("/history")
 async def history_index(request: Request) -> Response:
     dbdir = request.app.state.dbdir
-    context = await db.run_in_thread(lambda: _history_context(db.connect(dbdir)))
+    context = await db.run_in_thread(lambda: _history_context(db.connect(dbdir), dbdir))
     context["error"] = request.query_params.get("error")
     return _render(request, "history.html", context, fragment="_history_list.html")
 
@@ -342,7 +363,7 @@ async def issues_requeue(request: Request, iid: int) -> Response:
         error = str(exc)
 
     if _is_htmx(request):
-        context = await db.run_in_thread(lambda: _history_context(db.connect(dbdir)))
+        context = await db.run_in_thread(lambda: _history_context(db.connect(dbdir), dbdir))
         context["error"] = error
         return _render(request, "_history_list.html", context, fragment="_history_list.html")
     if error:

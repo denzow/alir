@@ -281,6 +281,13 @@ button:hover { border-color: var(--accent); }
   overflow-wrap: anywhere;
 }
 .report a:hover { text-decoration: underline; }
+.resume-cmd {
+  display: block; margin-top: 0.2rem;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 0.74rem; white-space: nowrap; overflow-x: auto;
+  /* クリック(タップ)で全体が選択され、そのままコピーできる */
+  user-select: all; cursor: copy;
+}
 .events {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-size: 0.76rem; line-height: 1.9;

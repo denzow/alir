@@ -303,6 +303,34 @@ def test_history_page_shows_finished_newest_first(
     assert "キューに戻して再実行" in res.text
 
 
+def test_history_shows_resume_command(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path / "repo"))
+    registry.set_status(
+        conn, issue.id, registry.STATUS_DONE, session_id="sess-1", branch="0/feature/x"
+    )
+
+    res = client.get("/history")
+    assert "claude --resume sess-1" in res.text
+    assert "repo-alir/issue-12" in res.text
+    assert "mcp.json" in res.text
+
+
+def test_history_omits_resume_command_without_session(
+    client: TestClient, dbdir: Path, tmp_path: Path
+) -> None:
+    from alir import registry
+
+    conn = db.connect(dbdir)
+    issue = registry.add(conn, url=URL, workdir=str(tmp_path / "repo"))
+    registry.set_status(conn, issue.id, registry.STATUS_DONE)
+
+    res = client.get("/history")
+    assert "claude --resume" not in res.text
+
+
 def test_issues_page_excludes_finished(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     from alir import registry
 

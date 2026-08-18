@@ -368,6 +368,18 @@ def _make_issue(workdir: Path) -> registry.Issue:
     )
 
 
+def test_worktree_path_per_issue(tmp_path: Path) -> None:
+    work = tmp_path / "repo"
+    path = driver.worktree_path(_make_issue(work), "alir/issue-12")
+    assert path == tmp_path / "repo-alir" / "issue-12"
+
+
+def test_worktree_path_direct_push_shares_branch_dir(tmp_path: Path) -> None:
+    work = tmp_path / "repo"
+    path = driver.worktree_path(_make_issue(work), "feat/x", push=True)
+    assert path == tmp_path / "repo-alir" / "branches" / "feat" / "x"
+
+
 def test_setup_worktree_bases_on_latest_default_branch(tmp_path: Path) -> None:
     """clone が古くても、fetch した origin のデフォルトブランチ先端から分岐する。"""
     seed = tmp_path / "seed"

@@ -124,7 +124,25 @@ def _current_branch(path: Path) -> str | None:
     return proc.stdout.strip() or None
 
 
-def _setup_push_worktree(workdir: Path, branch: str, root: Path) -> Path:
+def worktree_path(issue: Issue, branch: str, *, push: bool = False) -> Path:
+    """Issue のセッションが作業する worktree のパスを返す(作成はしない)。
+
+    worktree は対象リポジトリの隣(<repo>-alir/)に置く。通常運用は Issue ごと
+    (issue-<n>)、直接 push 運用は push 先ブランチの共有 worktree
+    (branches/<ブランチ名>)。"/" を含むブランチ名はそのまま入れ子の
+    ディレクトリにする(feat/x と feat-x が同じパスに写像されて別ブランチの
+    worktree を誤って再利用することを避ける)。
+    Web UI がセッションを手動 resume するコマンドの表示にも使うため、
+    配置の規約はこの関数に一元化する。
+    """
+    workdir = Path(issue.workdir)
+    root = workdir.parent / f"{workdir.name}-alir"
+    if push:
+        return root / "branches" / branch
+    return root / f"issue-{issue.number}"
+
+
+def _setup_push_worktree(workdir: Path, branch: str, path: Path) -> Path:
     """push 先ブランチをチェックアウトした共有 worktree を用意する。
 
     直接 push 運用では同じ workdir の全 Issue がこの worktree
@@ -133,10 +151,6 @@ def _setup_push_worktree(workdir: Path, branch: str, root: Path) -> Path:
     push 先ブランチが workdir 側でチェックアウト中だと git が worktree の
     作成を拒否するので、専用のブランチを指定する運用を想定する。
     """
-    # "/" を含むブランチ名はそのまま入れ子のディレクトリにする
-    # (feat/x と feat-x が同じパスに写像されて別ブランチの worktree を
-    # 誤って再利用することを避ける)
-    path = root / "branches" / branch
     if path.exists():
         with contextlib.suppress(DriverError):
             _git(path, "pull", "--ff-only", "origin", branch)
@@ -178,10 +192,9 @@ def setup_worktree(issue: Issue, branch: str, *, push: bool = False) -> Path:
     共有 worktree を使う。
     """
     workdir = Path(issue.workdir)
-    root = workdir.parent / f"{workdir.name}-alir"
+    path = worktree_path(issue, branch, push=push)
     if push:
-        return _setup_push_worktree(workdir, branch, root)
-    path = root / f"issue-{issue.number}"
+        return _setup_push_worktree(workdir, branch, path)
     if path.exists():
         return path
     path.parent.mkdir(parents=True, exist_ok=True)

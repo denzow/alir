@@ -1,4 +1,4 @@
-{% macro issue_card(issue, reports, draggable=False, requeue=False) %}
+{% macro issue_card(issue, reports, draggable=False, requeue=False, resume_commands=None) %}
 <div class="card st-{{ issue.status }}"{% if draggable %} data-issue-id="{{ issue.id }}"{% endif %}>
   <div class="card-top">
     <span class="status">{{ issue.status }}</span>
@@ -20,6 +20,13 @@
     {% if report.pr_url %}
     <a href="{{ report.pr_url }}">{{ report.pr_url | replace("https://github.com/", "") }}</a>
     {% endif %}
+  </div>
+  {% endif %}
+  {% set resume_cmd = resume_commands.get(issue.id) if resume_commands else none %}
+  {% if resume_cmd %}
+  <div class="report">
+    <span class="label">別ターミナルで resume(クリックで全選択)</span>
+    <code class="resume-cmd">{{ resume_cmd }}</code>
   </div>
   {% endif %}
   {% if requeue and issue.status == "failed" %}

@@ -1,7 +1,7 @@
 {% import "_issue_card.html" as cards %}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 {% for issue in items %}
-{{ cards.issue_card(issue, reports, requeue=True) }}
+{{ cards.issue_card(issue, reports, requeue=True, resume_commands=resume_commands) }}
 {% else %}
 <p class="empty">終了した Issue はまだありません。<br>done / failed になった Issue が新しい順に並びます。</p>
 {% endfor %}
