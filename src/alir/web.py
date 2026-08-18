@@ -13,7 +13,7 @@ import json
 import os
 import socket
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -34,6 +34,7 @@ from alir import (
     reports,
     retry,
     settings,
+    usage,
 )
 from alir.importer import ImporterError
 from alir.questions import Question, QuestionError
@@ -382,10 +383,8 @@ def _settings_context(dbdir: Path) -> dict[str, Any]:
     conn = db.connect(dbdir)
     return {
         "branch_template": settings.branch_template(conn),
-        "import_targets": importer.list_targets(conn),
-        "import_interval": importer.import_interval(conn),
-        "import_interval_hint": importer.DEFAULT_INTERVAL,
-        "import_interval_min": importer.MIN_INTERVAL,
+        "usage_threshold_percent": round(settings.usage_threshold(conn) * 100),
+        "model": settings.model(conn),
         "push_branches": settings.push_branches(conn),
         "workdirs": registry.list_workdirs(conn),
         "pushover_status": notify.pushover_source(conn),
@@ -441,120 +440,47 @@ async def settings_save(request: Request) -> Response:
     return await _settings_result(request, dbdir, error, saved=True)
 
 
-@router.post("/settings/targets/add")
-async def settings_targets_add(request: Request) -> Response:
+@router.post("/settings/usage-threshold")
+async def settings_usage_threshold_save(request: Request) -> Response:
     dbdir = request.app.state.dbdir
     form = await request.form()
-    workdir = str(form.get("workdir") or "").strip()
-    label = str(form.get("label") or "").strip()
+    raw = str(form.get("threshold") or "").strip()
 
+    # フォームはパーセント(1〜100)で受け、保存は割合(0〜1)で行う
     error: str | None = None
     try:
-        await db.run_in_thread(
-            lambda: importer.add_target(db.connect(dbdir), workdir=workdir, label=label)
-        )
-    except ImporterError as exc:
-        error = str(exc)
-    return await _settings_result(request, dbdir, error)
-
-
-@router.post("/settings/targets/remove")
-async def settings_targets_remove(request: Request) -> Response:
-    dbdir = request.app.state.dbdir
-    form = await request.form()
-    workdir = str(form.get("workdir") or "").strip()
-    label = str(form.get("label") or "").strip()
-
-    error: str | None = None
-    try:
-        await db.run_in_thread(
-            lambda: importer.remove_target(db.connect(dbdir), workdir=workdir, label=label)
-        )
-    except ImporterError as exc:
-        error = str(exc)
-    return await _settings_result(request, dbdir, error)
-
-
-def _import_now(conn: Any, targets: list[importer.ImportTarget] | None) -> importer.ImportOutcome:
-    """取り込みを実行し、登録できた Issue を稼働ログに残す。
-
-    fetch を明示的に渡すのは、テストから gh の呼び出しを差し替えられるようにするため。
-    """
-    outcome = importer.run_import(conn, fetch=importer.fetch_labeled_issues, targets=targets)
-    for issue in outcome.imported:
-        # ログの永続化に失敗しても、取り込んだ結果は画面に返す
-        with contextlib.suppress(Exception):
-            control.log_event(conn, f"import #{issue.id} {issue.ref}")
-    return outcome
-
-
-def _import_message(outcome: importer.ImportOutcome) -> tuple[str | None, str | None]:
-    """取り込み結果を (エラー, 通知) の文言にする。
-
-    一部の対象だけが失敗しても取り込めた件数は伝わるように、
-    エラーがあるときは件数もエラー側の文言に含める(通知は表示されないため)。
-    """
-    summary = f"{outcome.found} 件が該当し、うち {len(outcome.imported)} 件を取り込みました。"
-    if outcome.errors:
-        return f"{summary} 失敗: {'; '.join(outcome.errors)}", None
-    return None, summary
-
-
-@router.post("/settings/targets/import")
-async def settings_targets_import(request: Request) -> Response:
-    dbdir = request.app.state.dbdir
-    form = await request.form()
-    workdir = str(form.get("workdir") or "").strip()
-    label = str(form.get("label") or "").strip()
-
-    def work() -> importer.ImportOutcome:
-        conn = db.connect(dbdir)
-        target = importer.find_target(conn, workdir=workdir, label=label)
-        return _import_now(conn, [target])
-
-    error: str | None = None
-    notice: str | None = None
-    try:
-        outcome = await db.run_in_thread(work)
-    except ImporterError as exc:
-        error = str(exc)
-    else:
-        error, notice = _import_message(outcome)
-    return await _settings_result(request, dbdir, error, notice=notice)
-
-
-@router.post("/settings/targets/import-all")
-async def settings_targets_import_all(request: Request) -> Response:
-    dbdir = request.app.state.dbdir
-    outcome = await db.run_in_thread(lambda: _import_now(db.connect(dbdir), None))
-    error, notice = _import_message(outcome)
-    return await _settings_result(request, dbdir, error, notice=notice)
-
-
-@router.post("/settings/targets/interval")
-async def settings_targets_interval(request: Request) -> Response:
-    dbdir = request.app.state.dbdir
-    form = await request.form()
-    raw = str(form.get("seconds") or "").strip()
-
-    error: str | None = None
-    notice: str | None = None
-    try:
-        seconds = float(raw or 0)
+        percent = float(raw)
     except ValueError:
-        error = f"interval must be a number: {raw}"
+        error = f"usage threshold must be a number (percent): {raw or '(empty)'}"
     else:
         try:
-            await db.run_in_thread(lambda: importer.set_import_interval(db.connect(dbdir), seconds))
-        except ImporterError as exc:
-            error = str(exc)
-        else:
-            notice = (
-                "定期取り込みを無効にしました。"
-                if seconds == 0
-                else f"{seconds:g} 秒ごとに定期取り込みします。"
+            await db.run_in_thread(
+                lambda: settings.set_usage_threshold(db.connect(dbdir), percent / 100)
             )
-    return await _settings_result(request, dbdir, error, notice=notice)
+        except SettingsError:
+            error = f"usage threshold must be greater than 0 and at most 100 (percent): {raw}"
+    return await _settings_result(request, dbdir, error, saved=True)
+
+
+@router.post("/settings/model/set")
+async def settings_model_set(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    model = str(form.get("model") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(lambda: settings.set_model(db.connect(dbdir), model))
+    except SettingsError as exc:
+        error = str(exc)
+    return await _settings_result(request, dbdir, error, saved=True)
+
+
+@router.post("/settings/model/clear")
+async def settings_model_clear(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    await db.run_in_thread(lambda: settings.clear_model(db.connect(dbdir)))
+    return await _settings_result(request, dbdir, None)
 
 
 @router.post("/settings/push-branches/set")
@@ -655,11 +581,203 @@ async def settings_web_url_clear(request: Request) -> Response:
     return await _settings_result(request, dbdir, None)
 
 
+def _import_context(dbdir: Path) -> dict[str, Any]:
+    conn = db.connect(dbdir)
+    return {
+        "import_targets": importer.list_targets(conn),
+        "import_interval": importer.import_interval(conn),
+        "import_interval_hint": importer.DEFAULT_INTERVAL,
+        "import_interval_min": importer.MIN_INTERVAL,
+        "workdirs": registry.list_workdirs(conn),
+    }
+
+
+async def _import_result(
+    request: Request,
+    dbdir: Path,
+    error: str | None,
+    *,
+    notice: str | None = None,
+) -> Response:
+    """import への POST の結果を返す。htmx ならフォーム断片、通常はリダイレクト。"""
+    if _is_htmx(request):
+        context = await db.run_in_thread(lambda: _import_context(dbdir))
+        context["error"] = error
+        context["notice"] = notice if error is None else None
+        return _render(request, "_import_form.html", context, fragment="_import_form.html")
+    if error:
+        return RedirectResponse(f"/import?error={quote(error)}", 303)
+    if notice:
+        return RedirectResponse(f"/import?notice={quote(notice)}", 303)
+    return RedirectResponse("/import", 303)
+
+
+@router.get("/import")
+async def import_index(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    context = await db.run_in_thread(lambda: _import_context(dbdir))
+    context["error"] = request.query_params.get("error")
+    context["notice"] = request.query_params.get("notice")
+    return _render(request, "import.html", context, fragment="_import_form.html")
+
+
+@router.post("/import/targets/add")
+async def import_targets_add(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    label = str(form.get("label") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: importer.add_target(db.connect(dbdir), workdir=workdir, label=label)
+        )
+    except ImporterError as exc:
+        error = str(exc)
+    return await _import_result(request, dbdir, error)
+
+
+@router.post("/import/targets/remove")
+async def import_targets_remove(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    label = str(form.get("label") or "").strip()
+
+    error: str | None = None
+    try:
+        await db.run_in_thread(
+            lambda: importer.remove_target(db.connect(dbdir), workdir=workdir, label=label)
+        )
+    except ImporterError as exc:
+        error = str(exc)
+    return await _import_result(request, dbdir, error)
+
+
+def _import_now(conn: Any, targets: list[importer.ImportTarget] | None) -> importer.ImportOutcome:
+    """取り込みを実行し、登録できた Issue を稼働ログに残す。
+
+    fetch を明示的に渡すのは、テストから gh の呼び出しを差し替えられるようにするため。
+    """
+    outcome = importer.run_import(conn, fetch=importer.fetch_labeled_issues, targets=targets)
+    for issue in outcome.imported:
+        # ログの永続化に失敗しても、取り込んだ結果は画面に返す
+        with contextlib.suppress(Exception):
+            control.log_event(conn, f"import #{issue.id} {issue.ref}")
+    return outcome
+
+
+def _import_message(outcome: importer.ImportOutcome) -> tuple[str | None, str | None]:
+    """取り込み結果を (エラー, 通知) の文言にする。
+
+    一部の対象だけが失敗しても取り込めた件数は伝わるように、
+    エラーがあるときは件数もエラー側の文言に含める(通知は表示されないため)。
+    """
+    summary = f"{outcome.found} 件が該当し、うち {len(outcome.imported)} 件を取り込みました。"
+    if outcome.errors:
+        return f"{summary} 失敗: {'; '.join(outcome.errors)}", None
+    return None, summary
+
+
+@router.post("/import/run")
+async def import_run(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    workdir = str(form.get("workdir") or "").strip()
+    label = str(form.get("label") or "").strip()
+
+    def work() -> importer.ImportOutcome:
+        conn = db.connect(dbdir)
+        target = importer.find_target(conn, workdir=workdir, label=label)
+        return _import_now(conn, [target])
+
+    error: str | None = None
+    notice: str | None = None
+    try:
+        outcome = await db.run_in_thread(work)
+    except ImporterError as exc:
+        error = str(exc)
+    else:
+        error, notice = _import_message(outcome)
+    return await _import_result(request, dbdir, error, notice=notice)
+
+
+@router.post("/import/run-all")
+async def import_run_all(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    outcome = await db.run_in_thread(lambda: _import_now(db.connect(dbdir), None))
+    error, notice = _import_message(outcome)
+    return await _import_result(request, dbdir, error, notice=notice)
+
+
+@router.post("/import/interval")
+async def import_interval_save(request: Request) -> Response:
+    dbdir = request.app.state.dbdir
+    form = await request.form()
+    raw = str(form.get("seconds") or "").strip()
+
+    error: str | None = None
+    notice: str | None = None
+    try:
+        seconds = float(raw or 0)
+    except ValueError:
+        error = f"interval must be a number: {raw}"
+    else:
+        try:
+            await db.run_in_thread(lambda: importer.set_import_interval(db.connect(dbdir), seconds))
+        except ImporterError as exc:
+            error = str(exc)
+        else:
+            notice = (
+                "定期取り込みを無効にしました。"
+                if seconds == 0
+                else f"{seconds:g} 秒ごとに定期取り込みします。"
+            )
+    return await _import_result(request, dbdir, error, notice=notice)
+
+
+def _format_remaining(delta: timedelta) -> str | None:
+    """リセットまでの残り時間を短い日本語にする。過ぎていれば None。"""
+    seconds = int(delta.total_seconds())
+    if seconds <= 0:
+        return None
+    days, rest = divmod(seconds, 86400)
+    hours, minutes = divmod(rest // 60, 60)
+    if days:
+        return f"残り{days}日{hours}時間"
+    if hours:
+        return f"残り{hours}時間{minutes}分"
+    return f"残り{minutes}分"
+
+
+def _usage_windows(raw: str | None) -> list[dict[str, Any]]:
+    """KEY_USAGE_STATUS の JSON を表示用に整形する。
+
+    resets はドライバの更新前に保存された古い形式([label, used] の 2 要素)では
+    欠けるので、その場合は残り時間なしで使用率だけ出す。
+    """
+    if not raw:
+        return []
+    now = datetime.now(timezone.utc)
+    windows = []
+    for row in json.loads(raw):
+        resets = str(row[2]) if len(row) > 2 and row[2] else None
+        remaining = None
+        if resets:
+            reset_at = usage.parse_reset_at(resets, now=now)
+            if reset_at is not None:
+                # リセット時刻を過ぎている = 保存された使用率が古い。
+                # 誤った残り時間を出すより、リセット済みであることを示す
+                remaining = _format_remaining(reset_at - now) or "リセット済み"
+        windows.append({"label": str(row[0]), "used": float(row[1]), "remaining": remaining})
+    return windows
+
+
 async def _loop_context(dbdir: Path) -> dict[str, Any]:
     def work() -> dict[str, Any]:
         conn = db.connect(dbdir)
-        raw = control.get_value(conn, control.KEY_USAGE_STATUS)
-        usage_windows = json.loads(raw) if raw else None
+        usage_windows = _usage_windows(control.get_value(conn, control.KEY_USAGE_STATUS))
         return {
             "paused": control.is_paused(conn),
             "alive": control.driver_alive(conn),

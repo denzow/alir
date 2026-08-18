@@ -35,6 +35,49 @@ def test_concurrent_asks_get_unique_ids(tmp_path: Path) -> None:
     assert [q.id for q in items] == list(range(1, 11))
 
 
+def test_concurrent_connects_initialize_schema_once(tmp_path: Path) -> None:
+    """未初期化の DB に同時に接続してもスキーマ作成が衝突しない。
+
+    作成はトランザクションで囲んであり、write ロックで直列化される。
+    """
+    dbdir = tmp_path / "data"
+    errors: list[BaseException] = []
+
+    def work() -> None:
+        try:
+            db.connect(dbdir)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert questions.list_questions(db.connect(dbdir)) == []
+
+
+def test_connect_does_not_wait_for_open_transaction(tmp_path: Path) -> None:
+    """初期化済みの DB への接続は稼働中のトランザクションを待たない。"""
+    dbdir = tmp_path / "data"
+    holder = db.connect(dbdir)
+    holder.execute("BEGIN")
+    try:
+        done = threading.Event()
+
+        def work() -> None:
+            db.connect(dbdir)
+            done.set()
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        thread.join(timeout=5.0)
+        assert done.is_set()
+    finally:
+        holder.rollback()
+
+
 def test_transaction_rolls_back_on_error(tmp_path: Path) -> None:
     dbdir = tmp_path / "data"
     conn = db.connect(dbdir)

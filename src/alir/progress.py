@@ -45,20 +45,16 @@ def add(
     if not message.strip():
         raise ProgressError("message must not be empty")
     now = _now()
+    message = message.strip()
     with db.transaction(conn):
-        cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM progress")
-        row = cur.fetchone()
-        assert row is not None
-        pid = int(str(row[0])) + 1
-        conn.execute(
-            "INSERT INTO progress (id, issue, session_id, message, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (pid, issue, session_id, message.strip(), now),
+        cur = conn.execute(
+            "INSERT INTO progress (issue, session_id, message, created_at) VALUES (?, ?, ?, ?)",
+            (issue, session_id, message, now),
         )
+        pid = cur.lastrowid
+        assert pid is not None
         conn.execute("DELETE FROM progress WHERE id <= ?", (pid - MAX_PROGRESS,))
-    return Progress(
-        id=pid, issue=issue, session_id=session_id, message=message.strip(), created_at=now
-    )
+    return Progress(id=pid, issue=issue, session_id=session_id, message=message, created_at=now)
 
 
 def list_progress(

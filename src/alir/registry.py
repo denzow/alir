@@ -38,6 +38,9 @@ _COLUMNS = (
     "created_at, updated_at, title, mode, note, origin, retries"
 )
 
+# INSERT で並べる列。id は iceql が採番するので渡さない。
+_INSERT_COLUMNS = _COLUMNS.removeprefix("id, ")
+
 
 class RegistryError(Exception):
     """Issue の登録・状態遷移に関する利用側の誤り。"""
@@ -166,16 +169,12 @@ def add(
         if int(str(row[0])) > 0:
             raise RegistryError(f"issue already registered and not finished: {url}")
 
-        cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM issues")
-        row = cur.fetchone()
-        assert row is not None
-        iid = int(str(row[0])) + 1
         now = _now()
-        conn.execute(
-            f"INSERT INTO issues ({_COLUMNS}) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        cur = conn.execute(
+            f"INSERT INTO issues ({_INSERT_COLUMNS}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            f"RETURNING {_COLUMNS}",
             (
-                iid,
                 url,
                 repo,
                 number,
@@ -193,7 +192,9 @@ def add(
                 0,
             ),
         )
-    return get(conn, iid)
+        row = cur.fetchone()
+        assert row is not None
+        return _row_to_issue(row)
 
 
 def get(conn: iceql.Connection, iid: int) -> Issue:

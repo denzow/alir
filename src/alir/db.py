@@ -1,8 +1,12 @@
 """iceql データベースへの接続とスキーマ初期化、トランザクション補助。
 
-書き込みの直列化は iceql 0.2.0 の 2 段ロック(BEGIN で DB 全体の write ロックを
-取得し COMMIT まで保持)に委ねる。プロセス内の別接続もプロセス間も直列化される。
-採番を含む read-modify-write はドメイン層が transaction() で囲んで原子的にする。
+書き込みの直列化は iceql の 2 段ロック(BEGIN で DB 全体の write ロックを取得し
+COMMIT まで保持)に委ねる。プロセス内の別接続もプロセス間も直列化される。
+read-modify-write はドメイン層が transaction() で囲んで原子的にする。
+
+id の採番は iceql に任せる。単一の integer 主キーを持つテーブルでは INSERT が
+id を省略すると最大値 + 1 が割り当たるので、ドメイン層は SELECT MAX(id) を
+投げずに Cursor.lastrowid か RETURNING で採番結果を受け取る。
 """
 
 from __future__ import annotations
@@ -103,35 +107,57 @@ CREATE TABLE issues (
 }
 
 
-def _migrate(conn: iceql.Connection) -> None:
-    """既存 DB への後方互換の列追加。"""
-    additions = (
-        ("issues", "title", "ALTER TABLE issues ADD COLUMN title TEXT"),
-        ("issues", "mode", "ALTER TABLE issues ADD COLUMN mode TEXT"),
-        ("issues", "note", "ALTER TABLE issues ADD COLUMN note TEXT"),
-        ("issues", "origin", "ALTER TABLE issues ADD COLUMN origin TEXT"),
-        ("issues", "retries", "ALTER TABLE issues ADD COLUMN retries INTEGER"),
-        ("reports", "outcome", "ALTER TABLE reports ADD COLUMN outcome TEXT"),
-    )
-    for table, column, ddl in additions:
+# 既存 DB への後方互換の列追加。(テーブル, 列, ALTER 文)
+_ADDITIONS = (
+    ("issues", "title", "ALTER TABLE issues ADD COLUMN title TEXT"),
+    ("issues", "mode", "ALTER TABLE issues ADD COLUMN mode TEXT"),
+    ("issues", "note", "ALTER TABLE issues ADD COLUMN note TEXT"),
+    ("issues", "origin", "ALTER TABLE issues ADD COLUMN origin TEXT"),
+    ("issues", "retries", "ALTER TABLE issues ADD COLUMN retries INTEGER"),
+    ("reports", "outcome", "ALTER TABLE reports ADD COLUMN outcome TEXT"),
+)
+
+
+def _missing_tables(dbdir: Path) -> list[str]:
+    """未作成のテーブル名。iceql のストレージ規約(schema.yaml)で判定する。"""
+    return [t for t in _DDLS if not (dbdir / f"{t}.schema.yaml").exists()]
+
+
+def _missing_columns(conn: iceql.Connection, skip: set[str]) -> list[str]:
+    """既存テーブルに足りない列の ALTER 文。skip のテーブルは作りたてなので見ない。"""
+    pending = []
+    for table, column, ddl in _ADDITIONS:
+        if table in skip:
+            continue
         try:
             conn.execute(f"SELECT {column} FROM {table} LIMIT 1")
         except iceql.Error:
-            conn.execute(ddl)
+            pending.append(ddl)
+    return pending
 
 
 def connect(dbdir: Path) -> iceql.Connection:
     """データディレクトリに接続する。未初期化のテーブルがあれば作る。
 
-    テーブルの有無は iceql のストレージ規約(テーブルごとの schema.yaml)で判定する。
+    スキーマの作成と列追加はトランザクションで囲む。iceql 0.3.0 から DDL を
+    トランザクション内で使えるようになったので、初期化は全か無かになり、
+    同時に起動した別プロセスの初期化とも write ロックで直列化される。
+    既に初期化済みなら BEGIN しない。稼働中のドライバのトランザクションを
+    起動のたびに待つのを避けるため。
     timeout は他の書き手のロック解放を待つ秒数。
     """
     dbdir.mkdir(parents=True, exist_ok=True)
     conn = iceql.connect(dbdir, timeout=30.0)
-    for table, ddl in _DDLS.items():
-        if not (dbdir / f"{table}.schema.yaml").exists():
+    if not _missing_tables(dbdir) and not _missing_columns(conn, skip=set()):
+        return conn
+    with transaction(conn):
+        # ロックを取ってから判定し直す。待っている間に別プロセスが作り終えている
+        # ことがあり、その状態で CREATE / ALTER を投げると失敗する。
+        created = _missing_tables(dbdir)
+        for table in created:
+            conn.execute(_DDLS[table])
+        for ddl in _missing_columns(conn, skip=set(created)):
             conn.execute(ddl)
-    _migrate(conn)
     return conn
 
 

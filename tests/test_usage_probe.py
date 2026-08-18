@@ -33,6 +33,140 @@ def test_parse_usage_text_without_matches() -> None:
     assert usage.parse_usage_text("something else") is None
 
 
+def test_parse_usage_text_captures_resets() -> None:
+    status = usage.parse_usage_text(SAMPLE)
+    assert status is not None
+    assert [w.resets for w in status.windows] == [
+        "Aug 1, 9:30pm (Asia/Tokyo)",
+        "Aug 2, 11am (Asia/Tokyo)",
+        "Aug 2, 11am (Asia/Tokyo)",
+    ]
+
+
+def test_parse_usage_text_without_resets_keeps_percentage() -> None:
+    status = usage.parse_usage_text("Current session: 19% used")
+    assert status is not None
+    assert status.windows[0].resets is None
+
+
+def test_parse_reset_at() -> None:
+    import zoneinfo
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    tokyo = zoneinfo.ZoneInfo("Asia/Tokyo")
+    assert usage.parse_reset_at("Aug 1, 9:30pm (Asia/Tokyo)", now=now) == datetime(
+        2026, 8, 1, 21, 30, tzinfo=tokyo
+    )
+    assert usage.parse_reset_at("Aug 2, 11am (Asia/Tokyo)", now=now) == datetime(
+        2026, 8, 2, 11, 0, tzinfo=tokyo
+    )
+
+
+def test_parse_reset_at_keeps_stale_reset_in_current_year() -> None:
+    """リセットを数時間過ぎた古いデータは過去のまま返す(翌年に繰り上げない)。"""
+    import zoneinfo
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)  # JST では 8/16 9:00
+    at = usage.parse_reset_at("Aug 16, 5am (Asia/Tokyo)", now=now)
+    assert at == datetime(2026, 8, 16, 5, 0, tzinfo=zoneinfo.ZoneInfo("Asia/Tokyo"))
+    assert at < now
+
+
+def test_parse_reset_at_rolls_over_year() -> None:
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc)
+    at = usage.parse_reset_at("Jan 2, 12am (Asia/Tokyo)", now=now)
+    assert at is not None
+    assert at.year == 2027
+
+
+def test_parse_reset_at_unparseable_returns_none() -> None:
+    assert usage.parse_reset_at("soon") is None
+    assert usage.parse_reset_at("Aug 1, 9:30pm (Not/AZone)") is None
+
+
+def test_pause_until_returns_earliest_reset_of_exceeded_windows() -> None:
+    import zoneinfo
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    status = usage.UsageStatus(
+        windows=(
+            usage.UsageWindow("session", 92.0, resets="Jul 30, 11pm (Asia/Tokyo)"),
+            usage.UsageWindow("week (Fable)", 80.0, resets="Aug 2, 11am (Asia/Tokyo)"),
+            usage.UsageWindow("week (all models)", 10.0, resets="Aug 2, 11am (Asia/Tokyo)"),
+        )
+    )
+    assert usage.pause_until(status, threshold=0.5, now=now) == datetime(
+        2026, 7, 30, 23, 0, tzinfo=zoneinfo.ZoneInfo("Asia/Tokyo")
+    )
+
+
+def test_pause_until_none_when_under_threshold() -> None:
+    status = usage.UsageStatus(
+        windows=(usage.UsageWindow("session", 30.0, resets="Jul 30, 11pm (Asia/Tokyo)"),)
+    )
+    assert usage.pause_until(status, threshold=0.5) is None
+
+
+def test_pause_until_none_when_exceeded_window_lacks_reset() -> None:
+    status = usage.UsageStatus(
+        windows=(
+            usage.UsageWindow("session", 92.0),
+            usage.UsageWindow("week (Fable)", 80.0, resets="Aug 2, 11am (Asia/Tokyo)"),
+        )
+    )
+    assert usage.pause_until(status, threshold=0.5) is None
+
+
+def test_run_loop_defers_usage_check_until_reset(tmp_path: Path) -> None:
+    """閾値超過中はリセット時刻まで使用率の確認を先送りする。"""
+    import zoneinfo
+    from datetime import datetime, timedelta, timezone
+
+    dbdir = tmp_path / "data"
+    conn = db.connect(dbdir)
+    registry.add(conn, url=URL, workdir="/tmp")
+
+    local = (datetime.now(timezone.utc) + timedelta(hours=3)).astimezone(
+        zoneinfo.ZoneInfo("Asia/Tokyo")
+    )
+    month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+        local.month - 1
+    ]
+    ampm = "am" if local.hour < 12 else "pm"
+    resets = f"{month} {local.day}, {local.hour % 12 or 12}:{local.minute:02d}{ampm} (Asia/Tokyo)"
+
+    def probe() -> usage.UsageStatus:
+        return usage.UsageStatus(windows=(usage.UsageWindow("session", 92.0, resets=resets),))
+
+    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
+        raise AssertionError("must not run while over the official limit")
+
+    logs: list[str] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        usage_probe=probe,
+        log=logs.append,
+    )
+    assert any("usage check deferred until reset" in line for line in logs)
+    assert registry.list_issues(db.connect(dbdir))[0].status == registry.STATUS_QUEUED
+
+
+def test_status_pause_reason_includes_resets() -> None:
+    status = usage.parse_usage_text(SAMPLE)
+    assert status is not None
+    reason = usage.status_pause_reason(status, threshold=0.5)
+    assert reason is not None
+    assert "resets Aug 2, 11am (Asia/Tokyo)" in reason
+
+
 def test_status_pause_reason_threshold() -> None:
     status = usage.parse_usage_text(SAMPLE)
     assert status is not None
@@ -127,11 +261,14 @@ def test_run_loop_skips_probe_when_disabled(tmp_path: Path) -> None:
     assert control.get_value(conn, control.KEY_USAGE_STATUS) is None
 
 
-def test_run_loop_honors_usage_threshold_without_budget(tmp_path: Path) -> None:
-    """トークン予算なしでも --budget-threshold 相当の閾値が使用率判定に効く。"""
+def test_run_loop_honors_usage_threshold_setting(tmp_path: Path) -> None:
+    """settings に保存した閾値が使用率判定に効く(既定の 50% では止まる使用率)。"""
+    from alir import settings
+
     dbdir = tmp_path / "data"
     conn = db.connect(dbdir)
     registry.add(conn, url=URL, workdir="/tmp")
+    settings.set_usage_threshold(conn, 0.7)
 
     def probe() -> usage.UsageStatus:
         return usage.UsageStatus(windows=(usage.UsageWindow("week (Fable)", 55.0),))
@@ -142,7 +279,6 @@ def test_run_loop_honors_usage_threshold_without_budget(tmp_path: Path) -> None:
         runner=_report_and_ok,
         worktree=_fake_worktree,
         usage_probe=probe,
-        usage_threshold=0.7,
         log=lambda _: None,
     )
     conn = db.connect(dbdir)
@@ -175,10 +311,10 @@ def test_run_loop_skips_probe_when_queue_empty(tmp_path: Path) -> None:
 
 
 def test_report_progress_instructs_stop_over_threshold(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from alir import control, mcp_server
+    from alir import mcp_server, settings
 
     conn = db.connect(tmp_path / "data")
-    control.set_value(conn, control.KEY_USAGE_THRESHOLD, "0.7")
+    settings.set_usage_threshold(conn, 0.7)
     monkeypatch.setattr(mcp_server, "_usage_cache", None)
     monkeypatch.setattr(
         mcp_server,
@@ -195,10 +331,10 @@ def test_report_progress_instructs_stop_over_threshold(tmp_path: Path, monkeypat
 
 
 def test_report_progress_no_stop_under_threshold(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from alir import control, mcp_server
+    from alir import mcp_server, settings
 
     conn = db.connect(tmp_path / "data")
-    control.set_value(conn, control.KEY_USAGE_THRESHOLD, "0.7")
+    settings.set_usage_threshold(conn, 0.7)
     monkeypatch.setattr(mcp_server, "_usage_cache", None)
     monkeypatch.setattr(
         mcp_server,
@@ -238,27 +374,6 @@ def test_process_issue_requeues_when_aborted(tmp_path: Path) -> None:
 
     finished = driver.process_issue(dbdir, issue.id, runner=runner, worktree=_fake_worktree)
     assert finished.status == registry.STATUS_QUEUED
-
-
-def test_run_loop_stores_threshold_for_mcp(tmp_path: Path) -> None:
-    from alir import control
-
-    dbdir = tmp_path / "data"
-    db.connect(dbdir)
-
-    def runner(*, prompt: str, cwd: Path, dbdir: Path, skip_permissions: bool = False) -> RunResult:
-        raise AssertionError("nothing to run")
-
-    driver.run_loop(
-        dbdir,
-        once=True,
-        runner=runner,
-        worktree=_fake_worktree,
-        usage_threshold=0.7,
-        log=lambda _: None,
-    )
-    conn = db.connect(dbdir)
-    assert control.get_value(conn, control.KEY_USAGE_THRESHOLD) == "0.7"
 
 
 def test_stop_instruction_is_recorded(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

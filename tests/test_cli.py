@@ -206,6 +206,21 @@ def test_model_set_empty_fails(dbdir: Path) -> None:
     assert result.exit_code != 0
 
 
+def test_uvicorn_log_config_adds_timestamp() -> None:
+    import logging.config
+
+    from alir.cli import _uvicorn_log_config
+
+    config = _uvicorn_log_config()
+    formatters = config["formatters"]
+    assert isinstance(formatters, dict)
+    for formatter in formatters.values():
+        assert formatter["fmt"].startswith("%(asctime)s ")
+        assert formatter["datefmt"] == "%Y-%m-%d %H:%M:%S"
+    # dictConfig として妥当な形のまま(uvicorn.run に渡して起動できる)
+    logging.config.dictConfig(config)
+
+
 def test_pushover_show_set_clear(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from alir import notify
 

@@ -27,6 +27,7 @@ from alir import (
     control,
     db,
     importer,
+    notify,
     questions,
     registry,
     reports,
@@ -42,6 +43,16 @@ BACKOFF_FACTOR = 2.0
 BACKOFF_MAX = 3600.0
 
 _RATE_LIMIT_RE = re.compile(r"rate.?limit|usage limit|limit reached", re.IGNORECASE)
+
+
+def log_with_timestamp(message: str) -> None:
+    """run_loop の既定のログ出力。ローカル時刻を付けて stdout へ出す。
+
+    events テーブルの記録には時刻が付くが stdout には付かず、後から
+    ターミナルのログを追うときに前後関係が分からないため。
+    """
+    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{now} {message}")
 
 
 class DriverError(Exception):
@@ -63,6 +74,7 @@ class RunResult:
 
 Runner = Callable[..., RunResult]
 WorktreeSetup = Callable[..., Path]
+FailNotify = Callable[[Issue, str | None], None]
 
 
 def _git(workdir: Path, *args: str) -> str:
@@ -610,27 +622,33 @@ def run_loop(
     worktree: WorktreeSetup = setup_worktree,
     skip_permissions: bool = False,
     question_timeout: timedelta = timedelta(hours=12),
-    budget: usage.Budget | None = None,
     usage_probe: Callable[[], usage.UsageStatus | None] | None = None,
     usage_check_ttl: float = 300.0,
-    usage_threshold: float | None = None,
     import_fetch: importer.Fetch = importer.fetch_labeled_issues,
     pr_status_fetch: ci.PrStatusFetch | None = None,
     ci_check_ttl: float = 300.0,
-    log: Callable[[str], None] = print,
+    log: Callable[[str], None] = log_with_timestamp,
+    fail_notifier: FailNotify = notify.notify_issue_failed,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
     各サイクルの先頭で timeout を過ぎた質問を処理し、回答が揃った parked の
     Issue を queued に戻す。failed の Issue は上限(settings.retry_limit)まで
     バックオフ付きで自動的に queued に戻し、上限に達したら通知する。
+    セッションが failed で終わった場合や worktree の用意などで例外が出た場合も
+    fail_notifier で通知する(自動リトライされる失敗も対象。通知の失敗は無視する)。
     手動の一時停止フラグ、公式レート制限使用率の
-    閾値超過、トークン予算の閾値超過、レート制限時のバックオフ中は
+    閾値超過、レート制限時のバックオフ中は
     新規 Issue を開始しない(実行中のものは完了まで走らせる)。
 
     usage_probe(通常は usage.fetch_usage_status)は初回サイクルで呼ばれ、
     以後 usage_check_ttl 秒キャッシュされる。セッションが完了するたびに
     キャッシュを破棄し、次の開始前に必ず新しい使用率で判定する。
+    停止閾値は settings.usage_threshold(Web UI から変更・永続化)を
+    サイクルごとに読むので、稼働中の変更も次のサイクルから反映される。
+    閾値を超過している間は、使用率がリセットまで下がらないことを利用して
+    超過中ウィンドウのリセット時刻まで確認を先送りする(usage.pause_until)。
+    閾値の変更とセッションの完了は先送りを破棄し、すぐ取り直す。
     イベントは events テーブルにも記録し、Web UI から参照できるようにする。
 
     取り込み(importer)は既定では Web UI のボタンから実行するもので、
@@ -666,18 +684,11 @@ def run_loop(
     last_pause_reason: str | None = None
     probe_status: usage.UsageStatus | None = None
     next_probe = 0.0  # monotonic 時刻。0 なので初回サイクルで必ず取得する
+    probe_threshold: float | None = None  # 直前のサイクルで見た停止閾値
     next_import = 0.0  # 定期取り込みの次回実行時刻(monotonic)
     import_interval = 0.0  # 直前のサイクルで見た取り込み間隔の設定値
     next_ci_check = 0.0
     resolved_prs: set[str] = set()  # マージ済み・クローズ済みで監視を終えた PR
-    if usage_threshold is not None:
-        threshold = usage_threshold
-    elif budget is not None:
-        threshold = budget.threshold
-    else:
-        threshold = usage.DEFAULT_THRESHOLD
-    # MCP 側(report_progress の中断判定)が同じ閾値を参照できるようにする
-    control.set_value(db.connect(dbdir), control.KEY_USAGE_THRESHOLD, str(threshold))
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
         active: dict[concurrent.futures.Future[Issue], int] = {}
         while True:
@@ -724,6 +735,11 @@ def run_loop(
                 ):
                     emit(f"requeue #{requeued.id} {requeued.ref}: PR CI failed ({pr_url})")
 
+            threshold = settings.usage_threshold(conn)
+            if probe_threshold is not None and threshold != probe_threshold:
+                # 閾値が変わると停止判定も変わるので、リセットまで先送りした確認をやり直す
+                next_probe = 0.0
+            probe_threshold = threshold
             # 開始候補がないときは使用率を取りに行かない(アイドル時の無駄な実行を避ける)
             has_queued = next_startable(conn) is not None
             if usage_probe is not None and has_queued and time.monotonic() >= next_probe:
@@ -731,21 +747,22 @@ def run_loop(
                 next_probe = time.monotonic() + usage_check_ttl
                 if probe_status is not None:
                     control.set_value(
-                        conn,
-                        control.KEY_USAGE_STATUS,
-                        json.dumps(
-                            [[w.label, w.used_percentage] for w in probe_status.windows],
-                            ensure_ascii=False,
-                        ),
+                        conn, control.KEY_USAGE_STATUS, usage.status_to_json(probe_status)
                     )
+                    # 超過中の使用率はリセットまで下がらないので、それまで確認を止める
+                    # (閾値の変更で予約は破棄され、取り直す)
+                    resume_at = usage.pause_until(probe_status, threshold=threshold)
+                    if resume_at is not None:
+                        delay = (resume_at - datetime.now(timezone.utc)).total_seconds()
+                        if delay > usage_check_ttl:
+                            next_probe = time.monotonic() + delay
+                            emit(f"usage check deferred until reset: {resume_at.isoformat()}")
 
             paused: str | None = None
             if control.is_paused(conn):
                 paused = "paused manually"
             if paused is None and probe_status is not None:
                 paused = usage.status_pause_reason(probe_status, threshold=threshold)
-            if paused is None and budget is not None:
-                paused = usage.pause_reason(conn, budget)
             if paused != last_pause_reason:
                 emit(f"pause: {paused}" if paused else "resume")
                 last_pause_reason = paused
@@ -789,6 +806,9 @@ def run_loop(
                 try:
                     finished = future.result()
                     emit(f"finish #{finished.id} {finished.ref}: {finished.status}")
+                    if finished.status == registry.STATUS_FAILED:
+                        with contextlib.suppress(Exception):
+                            fail_notifier(finished, None)
                     backoff = BACKOFF_INITIAL
                 except RateLimited as exc:
                     emit(f"rate limited #{iid}: {exc}; backoff {int(backoff)}s")
@@ -796,5 +816,8 @@ def run_loop(
                     backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
                 except Exception as exc:  # noqa: BLE001
                     emit(f"error #{iid}: {exc}")
+                    # 例外で終わった Issue は failed になっている(process_issue 参照)
+                    with contextlib.suppress(Exception):
+                        fail_notifier(registry.get(db.connect(dbdir), iid), str(exc))
                 # セッションが終わるたびに使用率を取り直す(次の開始前の確認)
                 next_probe = 0.0

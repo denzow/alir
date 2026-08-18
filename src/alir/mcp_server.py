@@ -8,14 +8,13 @@ report_progress は公式の使用率もチェックし、閾値を超えてい�
 from __future__ import annotations
 
 import contextlib
-import json
 import time
 from pathlib import Path
 from typing import Any
 
 import iceql
 
-from alir import control, db, notify, progress, questions, registry, reports, usage
+from alir import control, db, notify, progress, questions, registry, reports, settings, usage
 
 # 使用率チェックのキャッシュ。progress のたびに CLI を起動しないための TTL
 USAGE_CHECK_TTL = 180.0
@@ -33,19 +32,11 @@ def _check_usage_stop(conn: iceql.Connection) -> str | None:
         status = usage_probe()
         _usage_cache = (now, status)
         if status is not None:
-            control.set_value(
-                conn,
-                control.KEY_USAGE_STATUS,
-                json.dumps(
-                    [[w.label, w.used_percentage] for w in status.windows], ensure_ascii=False
-                ),
-            )
+            control.set_value(conn, control.KEY_USAGE_STATUS, usage.status_to_json(status))
     status = _usage_cache[1]
     if status is None:
         return None
-    raw = control.get_value(conn, control.KEY_USAGE_THRESHOLD)
-    threshold = float(raw) if raw else usage.DEFAULT_THRESHOLD
-    return usage.status_pause_reason(status, threshold=threshold)
+    return usage.status_pause_reason(status, threshold=settings.usage_threshold(conn))
 
 
 def ask_human_tool(

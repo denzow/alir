@@ -26,6 +26,9 @@ _COLUMNS = (
     "timeout_action, status, answer, answer_note, created_at, answered_at"
 )
 
+# INSERT で並べる列。id は iceql が採番するので渡さない。
+_INSERT_COLUMNS = _COLUMNS.removeprefix("id, ")
+
 
 class QuestionError(Exception):
     """質問の登録・回答に関する利用側の誤り。"""
@@ -106,30 +109,27 @@ def ask(
     if timeout_action not in TIMEOUT_ACTIONS:
         raise QuestionError(f"timeout_action must be one of {TIMEOUT_ACTIONS}")
 
-    with db.transaction(conn):
-        cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM questions")
-        row = cur.fetchone()
-        assert row is not None
-        qid = int(str(row[0])) + 1
-        conn.execute(
-            f"INSERT INTO questions ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                qid,
-                issue,
-                session_id,
-                question,
-                json.dumps(options, ensure_ascii=False),
-                recommended,
-                impact,
-                timeout_action,
-                STATUS_OPEN,
-                None,
-                None,
-                _now(),
-                None,
-            ),
-        )
-    return get(conn, qid)
+    cur = conn.execute(
+        f"INSERT INTO questions ({_INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        f"RETURNING {_COLUMNS}",
+        (
+            issue,
+            session_id,
+            question,
+            json.dumps(options, ensure_ascii=False),
+            recommended,
+            impact,
+            timeout_action,
+            STATUS_OPEN,
+            None,
+            None,
+            _now(),
+            None,
+        ),
+    )
+    row = cur.fetchone()
+    assert row is not None
+    return _row_to_question(row)
 
 
 def get(conn: iceql.Connection, qid: int) -> Question:

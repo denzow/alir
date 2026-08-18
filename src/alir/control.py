@@ -17,7 +17,6 @@ from alir import db
 KEY_PAUSED = "paused"
 KEY_HEARTBEAT = "heartbeat_at"
 KEY_USAGE_STATUS = "usage_status"
-KEY_USAGE_THRESHOLD = "usage_threshold"
 # serve / web が起動時に自動検出して記録する Web UI の URL(運用者の設定ではない)
 KEY_WEB_URL_AUTO = "web_url_auto"
 
@@ -37,15 +36,16 @@ def _now() -> datetime:
 
 
 def set_value(conn: iceql.Connection, key: str, value: str) -> None:
-    """control テーブルの KV を設定する。設定値の保存にも使う。"""
-    with db.transaction(conn):
-        cur = conn.execute("SELECT COUNT(*) FROM control WHERE key = ?", (key,))
-        row = cur.fetchone()
-        assert row is not None
-        if int(str(row[0])) > 0:
-            conn.execute("UPDATE control SET value = ? WHERE key = ?", (value, key))
-        else:
-            conn.execute("INSERT INTO control (key, value) VALUES (?, ?)", (key, value))
+    """control テーブルの KV を設定する。設定値の保存にも使う。
+
+    主キーの衝突を DO UPDATE で解決するので、有無を調べてから
+    INSERT / UPDATE を分ける read-modify-write は要らない。
+    """
+    conn.execute(
+        "INSERT INTO control (key, value) VALUES (?, ?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
 
 
 def get_value(conn: iceql.Connection, key: str) -> str | None:
@@ -149,13 +149,11 @@ def driver_alive(conn: iceql.Connection, *, stale_after_seconds: float = 120.0) 
 
 def log_event(conn: iceql.Connection, message: str) -> Event:
     """イベントを 1 件記録し、古いものを MAX_EVENTS 件に切り詰める。"""
+    at = _now().isoformat(timespec="seconds")
     with db.transaction(conn):
-        cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM events")
-        row = cur.fetchone()
-        assert row is not None
-        eid = int(str(row[0])) + 1
-        at = _now().isoformat(timespec="seconds")
-        conn.execute("INSERT INTO events (id, at, message) VALUES (?, ?, ?)", (eid, at, message))
+        cur = conn.execute("INSERT INTO events (at, message) VALUES (?, ?)", (at, message))
+        eid = cur.lastrowid
+        assert eid is not None
         conn.execute("DELETE FROM events WHERE id <= ?", (eid - MAX_EVENTS,))
     return Event(id=eid, at=at, message=message)
 

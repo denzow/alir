@@ -137,6 +137,48 @@ def test_run_loop_once_processes_all_queued(dbdir: Path) -> None:
     assert statuses == [registry.STATUS_DONE, registry.STATUS_DONE]
 
 
+def test_log_with_timestamp_prefixes_local_time(capsys: pytest.CaptureFixture[str]) -> None:
+    import re
+
+    driver.log_with_timestamp("start #1 denzow/alir#12")
+    out = capsys.readouterr().out
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} start #1 denzow/alir#12\n", out)
+
+
+def test_run_loop_notifies_on_failed_session(dbdir: Path) -> None:
+    issue = _add_issue(dbdir, workdir="/tmp/a")
+    runner = _runner(RunResult(exit_code=1, session_id=None, output="boom"))
+    calls: list[tuple[int, str | None]] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=_fake_worktree,
+        log=lambda _: None,
+        fail_notifier=lambda i, detail: calls.append((i.id, detail)),
+    )
+    assert calls == [(issue.id, None)]
+
+
+def test_run_loop_notifies_on_worktree_error(dbdir: Path) -> None:
+    issue = _add_issue(dbdir, workdir="/tmp/a")
+
+    def broken_worktree(issue: registry.Issue, branch: str, *, push: bool = False) -> Path:
+        raise driver.DriverError("no such repo")
+
+    runner = _runner(RunResult(exit_code=0, session_id=None, output=""))
+    calls: list[tuple[int, str | None]] = []
+    driver.run_loop(
+        dbdir,
+        once=True,
+        runner=runner,
+        worktree=broken_worktree,
+        log=lambda _: None,
+        fail_notifier=lambda i, detail: calls.append((i.id, detail)),
+    )
+    assert calls == [(issue.id, "no such repo")]
+
+
 def test_next_import_at_runs_once_when_enabled() -> None:
     """無効から有効にしたときは待たずに 1 回取り込む。"""
     assert driver.next_import_at(0.0, 0.0, 300.0) == 0.0

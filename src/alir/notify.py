@@ -124,6 +124,19 @@ def notify_question(question: Question) -> None:
     notify_message(build_message(question))
 
 
+def notify_issue_failed(issue: Issue, detail: str | None = None) -> None:
+    """Issue の処理失敗を各チャネルへ通知する。
+
+    detail には失敗原因(例外メッセージなど)を渡す。複数行の場合は
+    通知が長くなりすぎないよう先頭行だけを使う。
+    """
+    message = f"#{issue.id} {issue.ref}: 処理が失敗した"
+    if detail:
+        first_line = detail.strip().splitlines()[0]
+        message = f"{message}: {first_line}"
+    notify_message(message)
+
+
 def notify_retry_exhausted(issue: Issue, limit: int) -> None:
     """自動リトライの上限到達を各チャネルへ通知する。"""
     notify_message(

@@ -57,21 +57,20 @@ def add(
     if outcome not in OUTCOMES:
         raise ReportError(f"outcome must be one of {OUTCOMES}")
     now = _now()
+    summary = summary.strip()
     with db.transaction(conn):
-        cur = conn.execute("SELECT COALESCE(MAX(id), 0) FROM reports")
-        row = cur.fetchone()
-        assert row is not None
-        rid = int(str(row[0])) + 1
-        conn.execute(
-            "INSERT INTO reports (id, issue, summary, pr_url, session_id, created_at, outcome) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (rid, issue, summary.strip(), pr_url, session_id, now, outcome),
+        cur = conn.execute(
+            "INSERT INTO reports (issue, summary, pr_url, session_id, created_at, outcome) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (issue, summary, pr_url, session_id, now, outcome),
         )
+        rid = cur.lastrowid
+        assert rid is not None
         conn.execute("DELETE FROM reports WHERE id <= ?", (rid - MAX_REPORTS,))
     return Report(
         id=rid,
         issue=issue,
-        summary=summary.strip(),
+        summary=summary,
         pr_url=pr_url,
         session_id=session_id,
         created_at=now,

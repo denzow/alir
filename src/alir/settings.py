@@ -11,7 +11,7 @@ from pathlib import Path
 
 import iceql
 
-from alir import control
+from alir import control, usage
 from alir.registry import Issue
 
 KEY_BRANCH_TEMPLATE = "branch_template"
@@ -29,6 +29,10 @@ DEFAULT_RETRY_LIMIT = 2
 
 # セッション(claude -p)に --model で渡すモデル名。未設定なら claude の既定に従う
 KEY_MODEL = "model"
+
+# 公式使用率(claude -p /usage)がこの割合(0〜1)を超えたら新規セッションを開始しない。
+# ドライバ(サイクルごと)と MCP(report_progress の中断判定)が同じ値を参照する
+KEY_USAGE_THRESHOLD = "usage_threshold"
 
 # Pushover 通知の認証情報(JSON: {"token": ..., "user": ...})。
 # 未設定なら環境変数(ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER)にフォールバックする
@@ -131,6 +135,19 @@ def set_model(conn: iceql.Connection, model: str) -> None:
 def clear_model(conn: iceql.Connection) -> None:
     """モデル名の設定を消し、claude の既定に戻す。"""
     control.set_value(conn, KEY_MODEL, "")
+
+
+def usage_threshold(conn: iceql.Connection) -> float:
+    """公式使用率の停止閾値(0〜1)を返す。未設定なら既定値。"""
+    raw = control.get_value(conn, KEY_USAGE_THRESHOLD)
+    return usage.DEFAULT_THRESHOLD if not raw else float(raw)
+
+
+def set_usage_threshold(conn: iceql.Connection, threshold: float) -> None:
+    """公式使用率の停止閾値を設定する。ドライバは次のサイクルから参照する。"""
+    if not 0 < threshold <= 1:
+        raise SettingsError("usage threshold must be greater than 0 and at most 1")
+    control.set_value(conn, KEY_USAGE_THRESHOLD, str(threshold))
 
 
 def pushover(conn: iceql.Connection) -> tuple[str, str] | None:

@@ -464,27 +464,120 @@ def test_settings_save_invalid_template_keeps_current(client: TestClient, dbdir:
     assert settings.branch_template(conn) == "alir/issue-{number}"
 
 
-def test_settings_page_shows_import_targets(
-    client: TestClient, dbdir: Path, tmp_path: Path
-) -> None:
+def test_settings_page_shows_usage_threshold(client: TestClient, dbdir: Path) -> None:
+    res = client.get("/settings")
+    assert res.status_code == 200
+    # 既定の 50% がパーセント表示で入っている
+    assert 'id="usage-threshold"' in res.text
+    assert 'value="50"' in res.text
+
+
+def test_settings_save_usage_threshold(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/usage-threshold",
+        data={"threshold": "90"},
+        headers={"HX-Request": "true"},
+    )
+    assert "保存しました" in res.text
+    conn = db.connect(dbdir)
+    assert settings.usage_threshold(conn) == 0.9
+
+
+def test_settings_save_usage_threshold_rejects_invalid(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/usage-threshold",
+        data={"threshold": "abc"},
+        headers={"HX-Request": "true"},
+    )
+    assert "must be a number" in res.text
+    res = client.post(
+        "/settings/usage-threshold",
+        data={"threshold": "150"},
+        headers={"HX-Request": "true"},
+    )
+    assert "at most 100" in res.text
+    conn = db.connect(dbdir)
+    assert settings.usage_threshold(conn) == 0.5
+
+
+def test_settings_page_shows_model(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.get("/settings")
+    assert "未設定(claude の既定に従う)" in res.text
+    settings.set_model(db.connect(dbdir), "sonnet")
+    res = client.get("/settings")
+    assert "<code>sonnet</code>" in res.text
+
+
+def test_settings_model_set_and_clear(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/model/set",
+        data={"model": "claude-sonnet-5"},
+        headers={"HX-Request": "true"},
+    )
+    assert "保存しました" in res.text
+    assert settings.model(db.connect(dbdir)) == "claude-sonnet-5"
+
+    res = client.post("/settings/model/clear", headers={"HX-Request": "true"})
+    assert res.status_code == 200
+    assert settings.model(db.connect(dbdir)) is None
+
+
+def test_settings_model_set_rejects_empty(client: TestClient, dbdir: Path) -> None:
+    from alir import settings
+
+    res = client.post(
+        "/settings/model/set",
+        data={"model": "  "},
+        headers={"HX-Request": "true"},
+    )
+    assert "model is empty" in res.text
+    assert settings.model(db.connect(dbdir)) is None
+
+
+def test_import_page_shows_targets(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     from alir import importer
 
     workdir = tmp_path / "repo"
     workdir.mkdir()
     importer.add_target(db.connect(dbdir), workdir=str(workdir), label="alir")
-    res = client.get("/settings")
-    assert "Issue の取り込み" in res.text
+    res = client.get("/import")
+    assert res.status_code == 200
+    assert "取り込み対象" in res.text
     assert "alir" in res.text
     assert str(workdir.resolve()) in res.text
 
+    res = client.get("/import", headers={"HX-Request": "true"})
+    assert "<html" not in res.text
+    assert str(workdir.resolve()) in res.text
 
-def test_settings_targets_add(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+
+def test_import_is_reachable_from_nav(client: TestClient) -> None:
+    """ヘッダーメニューから import ページへ行ける。"""
+    res = client.get("/issues")
+    assert 'href="/import"' in res.text
+
+
+def test_settings_page_no_longer_shows_import(client: TestClient, dbdir: Path) -> None:
+    """取り込みは import ページへ移したので設定画面には出ない。"""
+    res = client.get("/settings")
+    assert "取り込み" not in res.text
+
+
+def test_import_targets_add(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     from alir import importer
 
     workdir = tmp_path / "repo"
     workdir.mkdir()
     res = client.post(
-        "/settings/targets/add",
+        "/import/targets/add",
         data={"workdir": str(workdir), "label": "alir"},
         headers={"HX-Request": "true"},
     )
@@ -493,13 +586,13 @@ def test_settings_targets_add(client: TestClient, dbdir: Path, tmp_path: Path) -
     assert [(t.workdir, t.label) for t in targets] == [(str(workdir.resolve()), "alir")]
 
 
-def test_settings_targets_add_missing_workdir_shows_error(
+def test_import_targets_add_missing_workdir_shows_error(
     client: TestClient, dbdir: Path, tmp_path: Path
 ) -> None:
     from alir import importer
 
     res = client.post(
-        "/settings/targets/add",
+        "/import/targets/add",
         data={"workdir": str(tmp_path / "missing"), "label": "alir"},
         headers={"HX-Request": "true"},
     )
@@ -507,14 +600,14 @@ def test_settings_targets_add_missing_workdir_shows_error(
     assert importer.list_targets(db.connect(dbdir)) == []
 
 
-def test_settings_targets_remove(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
+def test_import_targets_remove(client: TestClient, dbdir: Path, tmp_path: Path) -> None:
     from alir import importer
 
     workdir = tmp_path / "repo"
     workdir.mkdir()
     importer.add_target(db.connect(dbdir), workdir=str(workdir), label="alir")
     res = client.post(
-        "/settings/targets/remove",
+        "/import/targets/remove",
         data={"workdir": str(workdir.resolve()), "label": "alir"},
         headers={"HX-Request": "true"},
     )
@@ -536,7 +629,7 @@ def _fake_fetch(monkeypatch: pytest.MonkeyPatch, items: list[dict[str, str]]) ->
     return searched
 
 
-def test_settings_targets_import(
+def test_import_run(
     client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from alir import control, importer, registry
@@ -552,7 +645,7 @@ def test_settings_targets_import(
     searched = _fake_fetch(monkeypatch, [{"url": url, "title": "取り込む Issue"}])
 
     res = client.post(
-        "/settings/targets/import",
+        "/import/run",
         data={"workdir": str(workdir.resolve()), "label": "alir"},
         headers={"HX-Request": "true"},
     )
@@ -566,14 +659,14 @@ def test_settings_targets_import(
     assert any("import #1" in e.message for e in control.recent_events(conn))
 
 
-def test_settings_targets_import_unknown_target_shows_error(
+def test_import_run_unknown_target_shows_error(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     workdir = tmp_path / "repo"
     workdir.mkdir()
     searched = _fake_fetch(monkeypatch, [])
     res = client.post(
-        "/settings/targets/import",
+        "/import/run",
         data={"workdir": str(workdir), "label": "alir"},
         headers={"HX-Request": "true"},
     )
@@ -581,7 +674,7 @@ def test_settings_targets_import_unknown_target_shows_error(
     assert searched == []
 
 
-def test_settings_targets_import_all(
+def test_import_run_all(
     client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from alir import importer, registry
@@ -595,7 +688,7 @@ def test_settings_targets_import_all(
     importer.add_target(conn, workdir=str(second), label="alir")
     searched = _fake_fetch(monkeypatch, [{"url": "https://github.com/denzow/alir/issues/12"}])
 
-    res = client.post("/settings/targets/import-all", headers={"HX-Request": "true"})
+    res = client.post("/import/run-all", headers={"HX-Request": "true"})
     assert res.status_code == 200
     assert searched == [str(first.resolve()), str(second.resolve())]
     # 同じ URL は 2 対象目でスキップされる
@@ -603,7 +696,7 @@ def test_settings_targets_import_all(
     assert len(registry.list_issues(db.connect(dbdir))) == 1
 
 
-def test_settings_targets_import_shows_errors_with_count(
+def test_import_run_shows_errors_with_count(
     client: TestClient, dbdir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """一部の対象が失敗しても、取り込めた件数はエラーと一緒に表示する。"""
@@ -623,33 +716,33 @@ def test_settings_targets_import_shows_errors_with_count(
         return [{"url": "https://github.com/denzow/alir/issues/12"}]
 
     monkeypatch.setattr(importer, "fetch_labeled_issues", fetch)
-    res = client.post("/settings/targets/import-all", headers={"HX-Request": "true"})
+    res = client.post("/import/run-all", headers={"HX-Request": "true"})
     assert "boom" in res.text
     assert "うち 1 件を取り込みました" in res.text
     assert len(registry.list_issues(db.connect(dbdir))) == 1
 
 
-def test_settings_targets_interval_set_and_disable(client: TestClient, dbdir: Path) -> None:
+def test_import_interval_set_and_disable(client: TestClient, dbdir: Path) -> None:
     from alir import importer
 
     res = client.post(
-        "/settings/targets/interval", data={"seconds": "300"}, headers={"HX-Request": "true"}
+        "/import/interval", data={"seconds": "300"}, headers={"HX-Request": "true"}
     )
     assert res.status_code == 200
     assert importer.import_interval(db.connect(dbdir)) == 300.0
 
     res = client.post(
-        "/settings/targets/interval", data={"seconds": "0"}, headers={"HX-Request": "true"}
+        "/import/interval", data={"seconds": "0"}, headers={"HX-Request": "true"}
     )
     assert importer.import_interval(db.connect(dbdir)) == 0.0
     assert "無効にしました" in res.text
 
 
-def test_settings_targets_interval_rejects_too_short(client: TestClient, dbdir: Path) -> None:
+def test_import_interval_rejects_too_short(client: TestClient, dbdir: Path) -> None:
     from alir import importer
 
     res = client.post(
-        "/settings/targets/interval", data={"seconds": "5"}, headers={"HX-Request": "true"}
+        "/import/interval", data={"seconds": "5"}, headers={"HX-Request": "true"}
     )
     assert "interval must be" in res.text
     assert importer.import_interval(db.connect(dbdir)) == 0.0
@@ -720,6 +813,52 @@ def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
     res = client.get("/loop")
     assert "week (Fable)" in res.text
     assert "54%" in res.text
+    # 古い形式(resets なし)でも使用率だけで表示できる
+    assert "残り" not in res.text
+
+
+def test_loop_page_shows_usage_reset_remaining(client: TestClient, dbdir: Path) -> None:
+    import json as json_mod
+    import zoneinfo
+    from datetime import datetime, timedelta, timezone
+
+    from alir import control
+
+    local = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)).astimezone(
+        zoneinfo.ZoneInfo("Asia/Tokyo")
+    )
+    month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+        local.month - 1
+    ]
+    ampm = "am" if local.hour < 12 else "pm"
+    resets = f"{month} {local.day}, {local.hour % 12 or 12}:{local.minute:02d}{ampm} (Asia/Tokyo)"
+    conn = db.connect(dbdir)
+    control.set_value(conn, control.KEY_USAGE_STATUS, json_mod.dumps([["session", 19.0, resets]]))
+    res = client.get("/loop")
+    assert "残り3時間" in res.text
+
+
+def test_loop_page_marks_stale_usage_as_reset(client: TestClient, dbdir: Path) -> None:
+    """リセット時刻を過ぎた古い使用率は残り時間ではなくリセット済みと表示する。"""
+    import json as json_mod
+    import zoneinfo
+    from datetime import datetime, timedelta, timezone
+
+    from alir import control
+
+    local = (datetime.now(timezone.utc) - timedelta(hours=4)).astimezone(
+        zoneinfo.ZoneInfo("Asia/Tokyo")
+    )
+    month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
+        local.month - 1
+    ]
+    ampm = "am" if local.hour < 12 else "pm"
+    resets = f"{month} {local.day}, {local.hour % 12 or 12}:{local.minute:02d}{ampm} (Asia/Tokyo)"
+    conn = db.connect(dbdir)
+    control.set_value(conn, control.KEY_USAGE_STATUS, json_mod.dumps([["session", 51.0, resets]]))
+    res = client.get("/loop")
+    assert "リセット済み" in res.text
+    assert "残り" not in res.text
 
 
 def test_sessions_page_shows_recent_reports(client: TestClient, dbdir: Path) -> None:

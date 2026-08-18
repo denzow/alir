@@ -111,6 +111,21 @@ def test_notify_message_includes_web_url(dbdir: Path, monkeypatch: pytest.Monkey
     assert sent == ["http://192.168.1.10:8710"]
 
 
+def test_notify_issue_failed_message(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from alir import registry
+
+    issue = registry.add(
+        db.connect(dbdir), url="https://github.com/denzow/alir/issues/12", workdir="/tmp/a"
+    )
+    sent: list[str] = []
+    monkeypatch.setattr(notify, "notify_message", lambda m: sent.append(m))
+    notify.notify_issue_failed(issue)
+    notify.notify_issue_failed(issue, "git worktree add failed: boom\nfatal: 2 行目の詳細")
+    assert sent[0] == f"#{issue.id} {issue.ref}: 処理が失敗した"
+    # 複数行の detail は先頭行だけを通知に含める
+    assert sent[1] == f"#{issue.id} {issue.ref}: 処理が失敗した: git worktree add failed: boom"
+
+
 def test_web_url_falls_back_to_auto_detected(dbdir: Path) -> None:
     from alir import control
 

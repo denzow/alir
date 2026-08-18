@@ -69,7 +69,13 @@ nav {
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
+  /* タブが狭い画面に収まらないときは nav の中だけ横スクロールさせる。
+     ページ全体が横にずれると本文が読みにくくなるため。 */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+nav::-webkit-scrollbar { display: none; }
+nav > * { flex: none; white-space: nowrap; }
 .brand {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
   font-weight: 700; font-size: 1rem; letter-spacing: 0.02em;
@@ -285,6 +291,7 @@ button:hover { border-color: var(--accent); }
   <a class="brand" href="/">alir</a>
   <a class="tab {% if request.url.path == '/' %}active{% endif %}" href="/">questions</a>
   <a class="tab {% if request.url.path.startswith('/issues') %}active{% endif %}" href="/issues">issues</a>
+  <a class="tab {% if request.url.path.startswith('/import') %}active{% endif %}" href="/import">import</a>
   <a class="tab {% if request.url.path.startswith('/history') %}active{% endif %}" href="/history">history</a>
   <a class="tab {% if request.url.path.startswith('/sessions') %}active{% endif %}" href="/sessions">sessions</a>
   <a class="tab {% if request.url.path.startswith('/loop') %}active{% endif %}" href="/loop">loop</a>

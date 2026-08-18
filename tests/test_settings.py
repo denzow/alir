@@ -165,6 +165,24 @@ def test_clear_push_branch_unknown_raises(conn, tmp_path: Path) -> None:  # type
         settings.clear_push_branch(conn, workdir=str(tmp_path))
 
 
+def test_usage_threshold_default(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.usage_threshold(conn) == 0.5
+
+
+def test_set_usage_threshold_roundtrip(conn) -> None:  # type: ignore[no-untyped-def]
+    settings.set_usage_threshold(conn, 0.9)
+    assert settings.usage_threshold(conn) == 0.9
+    settings.set_usage_threshold(conn, 1.0)
+    assert settings.usage_threshold(conn) == 1.0
+
+
+def test_set_usage_threshold_rejects_out_of_range(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_usage_threshold(conn, 0)
+    with pytest.raises(SettingsError):
+        settings.set_usage_threshold(conn, 1.5)
+
+
 def test_retry_limit_default(conn) -> None:  # type: ignore[no-untyped-def]
     assert settings.retry_limit(conn) == 2
 

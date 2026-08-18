@@ -13,7 +13,8 @@
     {% endif %}
     {% if usage_windows %}
     {% for window in usage_windows %}
-    <span>{{ window[0] | replace("week (all models)", "week") }} {{ window[1] | round | int }}%</span>
+    <span>{{ window.label | replace("week (all models)", "week") }}
+      {{ window.used | round | int }}%{% if window.remaining %}({{ window.remaining }}){% endif %}</span>
     {% endfor %}
     {% endif %}
   </div>

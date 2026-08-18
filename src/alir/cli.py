@@ -16,6 +16,25 @@ from alir.registry import RegistryError
 from alir.settings import SettingsError
 
 
+def _uvicorn_log_config() -> dict[str, object]:
+    """uvicorn の標準ログ設定にタイムスタンプを足したもの。
+
+    ドライバのログ(driver.log_with_timestamp)と同じ書式にそろえ、
+    serve の stdout を時系列で追えるようにする。
+    """
+    import copy
+
+    import uvicorn
+
+    config: dict[str, object] = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    formatters = config["formatters"]
+    assert isinstance(formatters, dict)
+    for formatter in formatters.values():
+        formatter["fmt"] = "%(asctime)s " + formatter["fmt"]
+        formatter["datefmt"] = "%Y-%m-%d %H:%M:%S"
+    return config
+
+
 @click.group()
 @click.version_option(alir.__version__)
 def main() -> None:
@@ -443,25 +462,6 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
             help="proceed_with_recommended の質問を期限切れにするまでの時間",
         ),
         click.option(
-            "--session-budget",
-            type=int,
-            default=None,
-            help="5 時間ウィンドウのトークン予算(未指定なら判定しない)",
-        ),
-        click.option(
-            "--weekly-budget",
-            type=int,
-            default=None,
-            help="週次ウィンドウのトークン予算(未指定なら判定しない)",
-        ),
-        click.option(
-            "--budget-threshold",
-            default=usage.DEFAULT_THRESHOLD,
-            show_default=True,
-            type=float,
-            help="使用率や予算がこの割合を超えたら新規実行を止める",
-        ),
-        click.option(
             "--no-usage-check",
             is_flag=True,
             help="claude -p /usage による公式使用率の確認を無効にする",
@@ -477,16 +477,6 @@ def _run_options(f: Callable[..., None]) -> Callable[..., None]:
     return f
 
 
-def _build_budget(
-    session_budget: int | None, weekly_budget: int | None, threshold: float
-) -> usage.Budget | None:
-    if session_budget is None and weekly_budget is None:
-        return None
-    return usage.Budget(
-        session_tokens=session_budget, weekly_tokens=weekly_budget, threshold=threshold
-    )
-
-
 @main.command("run")
 @click.option("--once", is_flag=True, help="キューを 1 巡したら終了する")
 @_run_options
@@ -496,9 +486,6 @@ def run_cmd(
     interval: float,
     skip_permissions: bool,
     question_timeout_hours: float,
-    session_budget: int | None,
-    weekly_budget: int | None,
-    budget_threshold: float,
     no_usage_check: bool,
     no_ci_check: bool,
 ) -> None:
@@ -514,9 +501,7 @@ def run_cmd(
         interval=interval,
         skip_permissions=skip_permissions,
         question_timeout=timedelta(hours=question_timeout_hours),
-        budget=_build_budget(session_budget, weekly_budget, budget_threshold),
         usage_probe=None if no_usage_check else usage.fetch_usage_status,
-        usage_threshold=budget_threshold,
         pr_status_fetch=None if no_ci_check else ci.fetch_pr_status,
     )
 
@@ -532,9 +517,6 @@ def serve_cmd(
     interval: float,
     skip_permissions: bool,
     question_timeout_hours: float,
-    session_budget: int | None,
-    weekly_budget: int | None,
-    budget_threshold: float,
     no_usage_check: bool,
     no_ci_check: bool,
 ) -> None:
@@ -566,16 +548,14 @@ def serve_cmd(
             "interval": interval,
             "skip_permissions": skip_permissions,
             "question_timeout": timedelta(hours=question_timeout_hours),
-            "budget": _build_budget(session_budget, weekly_budget, budget_threshold),
             "usage_probe": None if no_usage_check else usage.fetch_usage_status,
-            "usage_threshold": budget_threshold,
             "pr_status_fetch": None if no_ci_check else ci.fetch_pr_status,
             "runner": runner,
         },
         daemon=True,
     )
     thread.start()
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, log_config=_uvicorn_log_config())
 
 
 @main.command("web")
@@ -591,4 +571,4 @@ def web_cmd(host: str, port: int) -> None:
     auto_url = web.record_auto_web_url(dbdir, host, port)
     if auto_url:
         click.echo(f"web ui: {auto_url}")
-    uvicorn.run(web.create_app(dbdir), host=host, port=port)
+    uvicorn.run(web.create_app(dbdir), host=host, port=port, log_config=_uvicorn_log_config())

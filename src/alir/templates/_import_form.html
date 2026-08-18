@@ -1,0 +1,70 @@
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if notice %}<p class="saved">{{ notice }}</p>{% endif %}
+<p class="section-label">取り込み対象</p>
+<div class="card add-form">
+  <p class="hint">
+    登録した workdir のリポジトリからラベル付きのオープンな Issue を検索し、
+    未登録のものをキュー末尾へ登録する。取り込みボタンを押したときに実行する。
+  </p>
+  {% for target in import_targets %}
+  <div class="target-row">
+    <span class="target-desc"><code>{{ target.label }}</code> {{ target.workdir }}</span>
+    <div class="target-actions">
+      <form method="post" action="/import/run"
+            hx-post="/import/run" hx-target="#import" hx-swap="innerHTML">
+        <input type="hidden" name="workdir" value="{{ target.workdir }}">
+        <input type="hidden" name="label" value="{{ target.label }}">
+        <button>取り込み</button>
+      </form>
+      <form method="post" action="/import/targets/remove"
+            hx-post="/import/targets/remove" hx-target="#import" hx-swap="innerHTML">
+        <input type="hidden" name="workdir" value="{{ target.workdir }}">
+        <input type="hidden" name="label" value="{{ target.label }}">
+        <button>削除</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="empty-inline">取り込み対象はまだありません。</p>
+  {% endfor %}
+  {% if import_targets %}
+  <form method="post" action="/import/run-all"
+        hx-post="/import/run-all" hx-target="#import" hx-swap="innerHTML">
+    <button>すべて取り込み</button>
+  </form>
+  {% endif %}
+  <form method="post" action="/import/targets/add"
+        hx-post="/import/targets/add" hx-target="#import" hx-swap="innerHTML">
+    <div class="field">
+      <label for="target-workdir">ローカルパス</label>
+      <input id="target-workdir" type="text" name="workdir" list="import-workdirs"
+             placeholder="対象リポジトリのローカルパス">
+    </div>
+    <datalist id="import-workdirs">
+      {% for workdir in workdirs %}<option value="{{ workdir }}">{% endfor %}
+    </datalist>
+    <div class="field">
+      <label for="target-label">ラベル</label>
+      <input id="target-label" type="text" name="label" placeholder="alir">
+    </div>
+    <button>対象を追加</button>
+  </form>
+</div>
+<p class="section-label">定期取り込み</p>
+<div class="card add-form">
+  <form method="post" action="/import/interval"
+        hx-post="/import/interval" hx-target="#import" hx-swap="innerHTML">
+    <div class="field">
+      <label for="import-interval">間隔(秒)</label>
+      <input id="import-interval" type="number" name="seconds" min="0" step="1"
+             value="{{ import_interval|int }}">
+    </div>
+    <p class="hint">
+      ドライバが取り込みを繰り返す間隔(秒)。<code>0</code> で無効にする(既定)。
+      有効にするなら {{ import_interval_min|int }} 秒以上を指定する
+      (例: <code>{{ import_interval_hint|int }}</code> = {{ (import_interval_hint / 60)|int }} 分)。
+      ドライバが動いていないときはこの設定に関わらず取り込まれない。
+    </p>
+    <button>間隔を保存</button>
+  </form>
+</div>
