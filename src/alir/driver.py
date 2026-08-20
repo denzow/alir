@@ -75,6 +75,7 @@ class RunResult:
 Runner = Callable[..., RunResult]
 WorktreeSetup = Callable[..., Path]
 FailNotify = Callable[[Issue, str | None], None]
+DoneNotify = Callable[[Issue], None]
 
 
 def _git(workdir: Path, *args: str) -> str:
@@ -657,6 +658,7 @@ def run_loop(
     ci_check_ttl: float = 300.0,
     log: Callable[[str], None] = log_with_timestamp,
     fail_notifier: FailNotify = notify.notify_issue_failed,
+    done_notifier: DoneNotify = notify.notify_session_done,
 ) -> None:
     """queued の Issue を優先度順に処理し続ける。once ならキューを使い切ったら終える。
 
@@ -840,7 +842,7 @@ def run_loop(
                     elif finished.status == registry.STATUS_DONE:
                         # voice の読み上げ用。Pushover には流れない(notify 側で種別を絞る)
                         with contextlib.suppress(Exception):
-                            notify.notify_session_done(finished)
+                            done_notifier(finished)
                     backoff = BACKOFF_INITIAL
                 except RateLimited as exc:
                     emit(f"rate limited #{iid}: {exc}; backoff {int(backoff)}s")

@@ -322,7 +322,11 @@ async def _deliver_event(conn: _Connection, event: events.Event) -> None:
     """
     assert conn.dbdir is not None
     dbdir = conn.dbdir
-    policies = await asyncio.to_thread(lambda: settings.voice_notify(db.connect(dbdir)))
+    try:
+        policies = await asyncio.to_thread(lambda: settings.voice_notify(db.connect(dbdir)))
+    except Exception as exc:  # noqa: BLE001 - DB の一時失敗でワーカを止めず既定値で続ける
+        _log(f"voice: 読み上げポリシーの読み取りに失敗したため既定値を使う: {exc}")
+        policies = dict(settings.DEFAULT_VOICE_NOTIFY)
     policy = policies.get(event.kind, "silent")
     if policy == "silent":
         return

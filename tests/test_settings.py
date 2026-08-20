@@ -213,3 +213,13 @@ def test_voice_notify_rejects_unknown_kind_and_policy(conn) -> None:  # type: ig
         settings.set_voice_notify(conn, {"unknown_kind": "speak"})
     with pytest.raises(SettingsError):
         settings.set_voice_notify(conn, {"question": "loud"})
+
+
+def test_voice_notify_ignores_corrupted_stored_value(conn) -> None:  # type: ignore[no-untyped-def]
+    from alir import control
+
+    control.set_value(conn, settings.KEY_VOICE_NOTIFY, "not json")
+    assert settings.voice_notify(conn) == settings.DEFAULT_VOICE_NOTIFY
+    # 未知のポリシー値も無視して既定に落ちる
+    control.set_value(conn, settings.KEY_VOICE_NOTIFY, '{"question": "loud"}')
+    assert settings.voice_notify(conn)["question"] == "speak"

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -219,12 +220,25 @@ def set_voice_beam_size(conn: iceql.Connection, beam_size: int) -> None:
 
 
 def voice_notify(conn: iceql.Connection) -> dict[str, str]:
-    """イベント種別ごとの読み上げポリシーを返す。未設定の種別は既定値で埋める。"""
+    """イベント種別ごとの読み上げポリシーを返す。未設定の種別は既定値で埋める。
+
+    保存値の破損(不正な JSON、未知の種別・ポリシー値)は無視して既定値で動かす。
+    通知の配送(voice._deliver_event)が都度呼ぶため、ここで例外を出すと
+    配送ワーカが止まってしまう。
+    """
     policies = dict(DEFAULT_VOICE_NOTIFY)
     raw = control.get_value(conn, KEY_VOICE_NOTIFY)
     if raw:
-        stored = json.loads(raw)
-        policies.update({k: v for k, v in stored.items() if k in DEFAULT_VOICE_NOTIFY})
+        with contextlib.suppress(ValueError):
+            stored = json.loads(raw)
+            if isinstance(stored, dict):
+                policies.update(
+                    {
+                        k: v
+                        for k, v in stored.items()
+                        if k in DEFAULT_VOICE_NOTIFY and v in VOICE_NOTIFY_POLICIES
+                    }
+                )
     return policies
 
 
