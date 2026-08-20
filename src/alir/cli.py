@@ -465,6 +465,24 @@ def resume_disable() -> None:
     click.echo("disabled")
 
 
+@main.group("voice", invoke_without_command=True)
+@click.pass_context
+def voice_group(ctx: click.Context) -> None:
+    """音声インターフェース(通話クライアント)を操作する。サブコマンドなしなら接続先を表示する。
+
+    通話画面や読み上げポリシーの設定は後続フェーズでここに足す。
+    """
+    if ctx.invoked_subcommand is None:
+        from alir import notify, voice
+
+        url = notify.web_url()
+        if url is None:
+            click.echo(f"endpoint: {voice.WS_PATH} (ホストは web-url 未設定のため不明)")
+            return
+        ws_url = url.rstrip("/").replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        click.echo(f"endpoint: {ws_url}{voice.WS_PATH}")
+
+
 def _run_options(f: Callable[..., None]) -> Callable[..., None]:
     """run と serve で共通のループドライバ用オプション。"""
     options = [
@@ -537,10 +555,24 @@ def run_cmd(
 @main.command("serve")
 @click.option("--host", default="0.0.0.0", show_default=True, help="バインドするホスト")
 @click.option("--port", default=8710, show_default=True, type=int, help="ポート")
+@click.option(
+    "--ssl-certfile",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="TLS 証明書(tailscale cert で取得したものなど)。指定すると https/wss で提供する",
+)
+@click.option(
+    "--ssl-keyfile",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="TLS 秘密鍵。--ssl-certfile とあわせて指定する",
+)
 @_run_options
 def serve_cmd(
     host: str,
     port: int,
+    ssl_certfile: Path | None,
+    ssl_keyfile: Path | None,
     parallel: int,
     interval: float,
     skip_permissions: bool,
@@ -548,7 +580,7 @@ def serve_cmd(
     no_usage_check: bool,
     no_ci_check: bool,
 ) -> None:
-    """Web UI・MCP(HTTP)・ループドライバをワンプロセスで起動する。
+    """Web UI・MCP(HTTP)・voice(WS)・ループドライバをワンプロセスで起動する。
 
     MCP は http://127.0.0.1:PORT/mcp で提供され、ドライバが起動する
     claude セッションはサブプロセスを立てずにここへ接続する。
@@ -562,8 +594,11 @@ def serve_cmd(
     from alir import ci, driver, web
     from alir.serve import create_combined_app
 
+    if (ssl_certfile is None) != (ssl_keyfile is None):
+        raise click.UsageError("--ssl-certfile と --ssl-keyfile は両方指定する")
     dbdir = data_dir()
-    auto_url = web.record_auto_web_url(dbdir, host, port)
+    scheme = "https" if ssl_certfile else "http"
+    auto_url = web.record_auto_web_url(dbdir, host, port, scheme=scheme)
     if auto_url:
         click.echo(f"web ui: {auto_url}")
     app = create_combined_app(dbdir)
@@ -583,7 +618,14 @@ def serve_cmd(
         daemon=True,
     )
     thread.start()
-    uvicorn.run(app, host=host, port=port, log_config=_uvicorn_log_config())
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_config=_uvicorn_log_config(),
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+    )
 
 
 @main.command("web")

@@ -1,6 +1,9 @@
 """通知: 質問の登録やリトライ上限の到達を Pushover とデスクトップに知らせる。
 
 通知は補助機能なので、失敗しても元の処理は成功させる(best-effort)。
+notify_question などの通知関数はイベントバス(events.bus)への publish であり、
+Pushover とデスクトップへの配信はバスの購読者の一つとして行う。
+voice の読み上げなど別チャネルは、同じバスを購読して同じイベントを受け取る。
 Pushover の認証情報は settings(alir pushover set)を優先し、
 未設定なら環境変数 ALIR_PUSHOVER_TOKEN / ALIR_PUSHOVER_USER を使う。
 どちらもなければ送らない。
@@ -19,7 +22,7 @@ import urllib.request
 
 import iceql
 
-from alir import config, control, db, settings
+from alir import config, control, db, events, settings
 from alir.questions import Question
 from alir.registry import Issue
 
@@ -112,20 +115,34 @@ def send_pushover(message: str, *, url: str | None) -> bool:
 
 
 def notify_message(message: str) -> None:
-    """メッセージを各チャネルへ通知する。失敗は握りつぶす。"""
+    """メッセージを Pushover とデスクトップへ届ける。失敗は握りつぶす。"""
     with contextlib.suppress(Exception):
         send_desktop(message)
     with contextlib.suppress(Exception):
         send_pushover(message, url=web_url())
 
 
+def _deliver(event: events.Event) -> None:
+    """バスのイベントを Pushover・デスクトップへ流す既定の購読者。"""
+    notify_message(event.message)
+
+
+events.bus.subscribe(_deliver)
+
+
 def notify_question(question: Question) -> None:
-    """質問の登録を各チャネルへ通知する。"""
-    notify_message(build_message(question))
+    """質問の登録をイベントバスへ発行する。"""
+    events.bus.publish(
+        events.Event(
+            kind=events.KIND_QUESTION,
+            message=build_message(question),
+            data={"question_id": question.id, "issue": question.issue},
+        )
+    )
 
 
 def notify_issue_failed(issue: Issue, detail: str | None = None) -> None:
-    """Issue の処理失敗を各チャネルへ通知する。
+    """Issue の処理失敗をイベントバスへ発行する。
 
     detail には失敗原因(例外メッセージなど)を渡す。複数行の場合は
     通知が長くなりすぎないよう先頭行だけを使う。
@@ -134,11 +151,22 @@ def notify_issue_failed(issue: Issue, detail: str | None = None) -> None:
     if detail:
         first_line = detail.strip().splitlines()[0]
         message = f"{message}: {first_line}"
-    notify_message(message)
+    events.bus.publish(
+        events.Event(
+            kind=events.KIND_ISSUE_FAILED,
+            message=message,
+            data={"issue_id": issue.id, "ref": issue.ref},
+        )
+    )
 
 
 def notify_retry_exhausted(issue: Issue, limit: int) -> None:
-    """自動リトライの上限到達を各チャネルへ通知する。"""
-    notify_message(
-        f"#{issue.id} {issue.ref}: 自動リトライが上限({limit}回)に達し failed のまま停止"
+    """自動リトライの上限到達をイベントバスへ発行する。"""
+    message = f"#{issue.id} {issue.ref}: 自動リトライが上限({limit}回)に達し failed のまま停止"
+    events.bus.publish(
+        events.Event(
+            kind=events.KIND_RETRY_EXHAUSTED,
+            message=message,
+            data={"issue_id": issue.id, "ref": issue.ref, "limit": limit},
+        )
     )
