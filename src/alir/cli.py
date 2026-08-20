@@ -543,6 +543,39 @@ def voice_whisper_model_cmd(model: str | None) -> None:
     click.echo(f"set: {settings.voice_whisper_model(conn)}")
 
 
+@voice_group.group("notify", invoke_without_command=True)
+@click.pass_context
+def voice_notify_group(ctx: click.Context) -> None:
+    """イベント読み上げのポリシーを操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        for kind, policy in sorted(settings.voice_notify(conn).items()):
+            click.echo(f"{kind}: {policy}")
+
+
+@voice_notify_group.command("set")
+@click.argument("assignments", nargs=-1, required=True)
+def voice_notify_set(assignments: tuple[str, ...]) -> None:
+    """読み上げポリシーを設定する。例: alir voice notify set question=speak session_done=chime
+
+    ポリシーは speak(要約を読み上げ) / chime(チャイムと字幕のみ) / silent(何もしない)。
+    接続中のクライアントにも次のイベントから効く。
+    """
+    updates: dict[str, str] = {}
+    for assignment in assignments:
+        kind, sep, policy = assignment.partition("=")
+        if not sep or not kind or not policy:
+            raise click.ClickException(f"invalid assignment: {assignment} (kind=policy 形式)")
+        updates[kind] = policy
+    conn = db.connect(data_dir())
+    try:
+        settings.set_voice_notify(conn, updates)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    for kind, policy in sorted(updates.items()):
+        click.echo(f"set: {kind}={policy}")
+
+
 @voice_group.command("beam-size")
 @click.argument("beam_size", type=int, required=False)
 def voice_beam_size_cmd(beam_size: int | None) -> None:

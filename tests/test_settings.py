@@ -197,3 +197,19 @@ def test_set_retry_limit_roundtrip(conn) -> None:  # type: ignore[no-untyped-def
 def test_set_retry_limit_rejects_negative(conn) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(SettingsError):
         settings.set_retry_limit(conn, -1)
+
+
+def test_voice_notify_defaults_and_partial_update(conn) -> None:  # type: ignore[no-untyped-def]
+    assert settings.voice_notify(conn) == settings.DEFAULT_VOICE_NOTIFY
+    settings.set_voice_notify(conn, {"question": "chime"})
+    policies = settings.voice_notify(conn)
+    assert policies["question"] == "chime"
+    # 指定しなかった種別は既定のまま
+    assert policies["session_done"] == settings.DEFAULT_VOICE_NOTIFY["session_done"]
+
+
+def test_voice_notify_rejects_unknown_kind_and_policy(conn) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SettingsError):
+        settings.set_voice_notify(conn, {"unknown_kind": "speak"})
+    with pytest.raises(SettingsError):
+        settings.set_voice_notify(conn, {"question": "loud"})

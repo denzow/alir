@@ -59,6 +59,17 @@ DEFAULT_VOICE_WHISPER_MODEL = "small"
 KEY_VOICE_BEAM_SIZE = "voice_beam_size"
 DEFAULT_VOICE_BEAM_SIZE = 2
 
+# イベント種別ごとの voice の読み上げポリシー(JSON: {"question": "speak", ...})。
+# speak は要約を合成音声で読み上げ、chime はチャイムと字幕だけ、silent は何もしない
+KEY_VOICE_NOTIFY = "voice_notify_policies"
+VOICE_NOTIFY_POLICIES = ("speak", "chime", "silent")
+DEFAULT_VOICE_NOTIFY = {
+    "question": "speak",
+    "session_done": "chime",
+    "issue_failed": "speak",
+    "retry_exhausted": "speak",
+}
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -205,6 +216,31 @@ def set_voice_beam_size(conn: iceql.Connection, beam_size: int) -> None:
     if beam_size < 1:
         raise SettingsError("beam size must be >= 1")
     control.set_value(conn, KEY_VOICE_BEAM_SIZE, str(beam_size))
+
+
+def voice_notify(conn: iceql.Connection) -> dict[str, str]:
+    """イベント種別ごとの読み上げポリシーを返す。未設定の種別は既定値で埋める。"""
+    policies = dict(DEFAULT_VOICE_NOTIFY)
+    raw = control.get_value(conn, KEY_VOICE_NOTIFY)
+    if raw:
+        stored = json.loads(raw)
+        policies.update({k: v for k, v in stored.items() if k in DEFAULT_VOICE_NOTIFY})
+    return policies
+
+
+def set_voice_notify(conn: iceql.Connection, updates: dict[str, str]) -> None:
+    """読み上げポリシーを検証して部分更新する。指定しなかった種別は変えない。"""
+    for kind, policy in updates.items():
+        if kind not in DEFAULT_VOICE_NOTIFY:
+            allowed = ", ".join(sorted(DEFAULT_VOICE_NOTIFY))
+            raise SettingsError(f"unknown event kind: {kind} (allowed: {allowed})")
+        if policy not in VOICE_NOTIFY_POLICIES:
+            raise SettingsError(
+                f"unknown policy: {policy} (allowed: {', '.join(VOICE_NOTIFY_POLICIES)})"
+            )
+    merged = voice_notify(conn)
+    merged.update(updates)
+    control.set_value(conn, KEY_VOICE_NOTIFY, json.dumps(merged, ensure_ascii=False))
 
 
 def usage_threshold(conn: iceql.Connection) -> float:

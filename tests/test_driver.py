@@ -1182,3 +1182,20 @@ def test_run_loop_does_not_requeue_merged_pr(dbdir: Path) -> None:
     assert runner.prompts == []  # type: ignore[attr-defined]
     conn = db.connect(dbdir)
     assert registry.get(conn, issue.id).status == registry.STATUS_DONE
+
+
+def test_run_loop_publishes_session_done_event(dbdir: Path) -> None:
+    from alir import events
+
+    issue = _add_issue(dbdir)
+    runner = _reporting_runner(RunResult(exit_code=0, session_id=None, output="ok"))
+    received: list[events.Event] = []
+    unsubscribe = events.bus.subscribe(received.append)
+    try:
+        driver.run_loop(
+            dbdir, once=True, runner=runner, worktree=_fake_worktree, log=lambda _: None
+        )
+    finally:
+        unsubscribe()
+    done_events = [e for e in received if e.kind == events.KIND_SESSION_DONE]
+    assert [e.data["ref"] for e in done_events] == [issue.ref]

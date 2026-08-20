@@ -122,21 +122,38 @@ def notify_message(message: str) -> None:
         send_pushover(message, url=web_url())
 
 
+# Pushover・デスクトップへ流すイベント種別。session_done などバスにだけ流れる
+# 種別を足してもプッシュ通知が増えないよう、明示した種別に限る
+_PUSH_KINDS = frozenset(
+    {events.KIND_QUESTION, events.KIND_ISSUE_FAILED, events.KIND_RETRY_EXHAUSTED}
+)
+
+
 def _deliver(event: events.Event) -> None:
     """バスのイベントを Pushover・デスクトップへ流す既定の購読者。"""
-    notify_message(event.message)
+    if event.kind in _PUSH_KINDS:
+        notify_message(event.message)
 
 
 events.bus.subscribe(_deliver)
 
 
 def notify_question(question: Question) -> None:
-    """質問の登録をイベントバスへ発行する。"""
+    """質問の登録をイベントバスへ発行する。
+
+    data には voice の読み上げ要約に使う質問本文・選択肢も含める。
+    """
     events.bus.publish(
         events.Event(
             kind=events.KIND_QUESTION,
             message=build_message(question),
-            data={"question_id": question.id, "issue": question.issue},
+            data={
+                "question_id": question.id,
+                "issue": question.issue,
+                "question": question.question,
+                "options": list(question.options),
+                "recommended": question.recommended,
+            },
         )
     )
 
@@ -156,6 +173,21 @@ def notify_issue_failed(issue: Issue, detail: str | None = None) -> None:
             kind=events.KIND_ISSUE_FAILED,
             message=message,
             data={"issue_id": issue.id, "ref": issue.ref},
+        )
+    )
+
+
+def notify_session_done(issue: Issue) -> None:
+    """セッションの完了(done)をイベントバスへ発行する。
+
+    Pushover には流れず(_PUSH_KINDS 外)、voice の読み上げなど
+    バスの購読者だけが受け取る。
+    """
+    events.bus.publish(
+        events.Event(
+            kind=events.KIND_SESSION_DONE,
+            message=f"#{issue.id} {issue.ref}: セッションが完了した",
+            data={"issue_id": issue.id, "ref": issue.ref, "title": issue.title},
         )
     )
 

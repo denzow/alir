@@ -23,6 +23,7 @@ from typing import Any
 KIND_QUESTION = "question"
 KIND_ISSUE_FAILED = "issue_failed"
 KIND_RETRY_EXHAUSTED = "retry_exhausted"
+KIND_SESSION_DONE = "session_done"
 
 
 @dataclass(frozen=True)

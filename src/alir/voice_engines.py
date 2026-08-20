@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import threading
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from alir import db, settings, voice
+from alir import db, events, settings, voice
 from alir.driver import log_with_timestamp as _log
 
 
@@ -91,6 +92,53 @@ class VoicevoxSynthesizer:
             return bytes(res.read())
 
 
+# 質問の要約に使う claude -p のタイムアウト。通知は非同期なので多少待ってよい
+_SUMMARY_TIMEOUT = 60.0
+
+
+def _fallback_question_summary(issue: str, question: str, options: list[str]) -> str:
+    """LLM が使えないときの機械的な読み上げ文。"""
+    text = f"{issue} で質問です。{question[:80]}"
+    if options:
+        text += f"。選択肢は {len(options)} 個です"
+    return text
+
+
+def summarize_event(event: events.Event) -> str:
+    """イベントを口頭向けの読み上げ文にする。
+
+    質問イベントは本文が長いので claude -p で 1〜2 文に要約する。
+    失敗したら機械的な要約に落とし、それ以外の種別は message をそのまま使う。
+    """
+    if event.kind != events.KIND_QUESTION:
+        return event.message
+    issue = str(event.data.get("issue") or "")
+    question = str(event.data.get("question") or "")
+    options = [str(o) for o in event.data.get("options") or []]
+    if not question:
+        return event.message
+    fallback = _fallback_question_summary(issue, question, options)
+    prompt = (
+        "次の質問を、音声で聞いて分かる日本語 1〜2 文に要約せよ。"
+        "前置きや装飾なしで要約文だけを出力する。"
+        "記号や URL は読み上げられないので言葉に置き換えるか省く。\n"
+        f"Issue: {issue}\n質問: {question}\n選択肢: {' / '.join(options)}"
+    )
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", prompt, "--output-format", "text"],
+            capture_output=True,
+            text=True,
+            timeout=_SUMMARY_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return fallback
+    if proc.returncode != 0:
+        return fallback
+    return proc.stdout.strip() or fallback
+
+
 def voicevox_version(base_url: str) -> str | None:
     """VOICEVOX engine の疎通確認。到達できなければ None。"""
     try:
@@ -134,4 +182,5 @@ def build_engines(dbdir: Path) -> voice.Engines | None:
         transcriber=transcriber,
         synthesizer=synthesizer,
         chunk_bytes=SileroVoiceActivityDetector.chunk_bytes(),
+        summarizer=summarize_event,
     )

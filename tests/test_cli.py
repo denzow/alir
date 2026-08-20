@@ -402,3 +402,24 @@ def test_voice_beam_size_show_set_and_validate(dbdir: Path) -> None:
     assert result.output.strip() == "5"
     result = runner.invoke(main, ["voice", "beam-size", "0"])
     assert result.exit_code != 0
+
+
+def test_voice_notify_show_and_set(dbdir: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["voice", "notify"])
+    assert result.exit_code == 0
+    assert "question: speak" in result.output
+    assert "session_done: chime" in result.output
+
+    result = runner.invoke(
+        main, ["voice", "notify", "set", "question=chime", "session_done=silent"]
+    )
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "notify"])
+    assert "question: chime" in result.output
+    assert "session_done: silent" in result.output
+
+    result = runner.invoke(main, ["voice", "notify", "set", "question"])
+    assert result.exit_code != 0
+    result = runner.invoke(main, ["voice", "notify", "set", "question=loud"])
+    assert result.exit_code != 0

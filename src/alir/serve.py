@@ -22,5 +22,7 @@ def create_combined_app(dbdir: Path) -> FastAPI:
     app.include_router(voice.router)  # mount("/") より先に登録した経路が優先される
     # voice extra が未導入なら None になり、WS は制御フレームにだけ応答する
     app.state.voice_engines = voice_engines.build_engines(dbdir)
+    # イベントの読み上げポリシー(settings.voice_notify)を接続が都度読むための場所
+    app.state.voice_dbdir = dbdir
     app.mount("/", mcp_app)
     return app

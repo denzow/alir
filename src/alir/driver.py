@@ -837,6 +837,10 @@ def run_loop(
                     if finished.status == registry.STATUS_FAILED:
                         with contextlib.suppress(Exception):
                             fail_notifier(finished, None)
+                    elif finished.status == registry.STATUS_DONE:
+                        # voice の読み上げ用。Pushover には流れない(notify 側で種別を絞る)
+                        with contextlib.suppress(Exception):
+                            notify.notify_session_done(finished)
                     backoff = BACKOFF_INITIAL
                 except RateLimited as exc:
                     emit(f"rate limited #{iid}: {exc}; backoff {int(backoff)}s")

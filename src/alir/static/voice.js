@@ -121,6 +121,12 @@ function onMessage(e) {
     case "stt_final":
       log("🎤 " + frame.text);
       break;
+    case "event":
+      // driver イベントの通知。読み上げ音声(speak 時)は後続の audio_start で届く。
+      // 発話への応答と区別できるよう、先にチャイムを鳴らす
+      playChime();
+      log("🔔 " + frame.text);
+      break;
     case "interrupt":
       // 発話が始まった。再生中・再生待ちの音声を捨て、受信中のストリームも破棄する
       stopPlayback();
@@ -171,6 +177,28 @@ function playNext() {
   };
   state.currentSource = source;
   source.start();
+}
+
+async function playChime() {
+  // 音源ファイルなしで済むよう、WebAudio の 2 音(上昇)で短いチャイムを作る
+  if (!state.playCtx) state.playCtx = new AudioContext();
+  if (state.playCtx.state === "suspended") await state.playCtx.resume();
+  const ctx = state.playCtx;
+  const t0 = ctx.currentTime;
+  [660, 880].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    const start = t0 + i * 0.16;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(start);
+    osc.stop(start + 0.16);
+  });
 }
 
 function stopPlayback() {
