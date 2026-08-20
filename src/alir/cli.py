@@ -498,6 +498,7 @@ def voice_status() -> None:
     click.echo(f"voicevox: {url} ({'v' + version if version else 'unreachable'})")
     click.echo(f"speaker: {settings.voice_speaker(conn)}")
     click.echo(f"whisper model: {settings.voice_whisper_model(conn)}")
+    click.echo(f"beam size: {settings.voice_beam_size(conn)}")
 
 
 @voice_group.command("voicevox-url")
@@ -540,6 +541,21 @@ def voice_whisper_model_cmd(model: str | None) -> None:
         return
     settings.set_voice_whisper_model(conn, model)
     click.echo(f"set: {settings.voice_whisper_model(conn)}")
+
+
+@voice_group.command("beam-size")
+@click.argument("beam_size", type=int, required=False)
+def voice_beam_size_cmd(beam_size: int | None) -> None:
+    """STT の beam search の幅を表示・設定する。大きいほど正確だが認識が遅くなる。"""
+    conn = db.connect(data_dir())
+    if beam_size is None:
+        click.echo(str(settings.voice_beam_size(conn)))
+        return
+    try:
+        settings.set_voice_beam_size(conn, beam_size)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {beam_size}")
 
 
 def _run_options(f: Callable[..., None]) -> Callable[..., None]:

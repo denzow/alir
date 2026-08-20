@@ -390,3 +390,15 @@ def test_voice_whisper_model_show_and_set(dbdir: Path) -> None:
     assert result.exit_code == 0
     result = runner.invoke(main, ["voice", "whisper-model"])
     assert result.output.strip() == "medium"
+
+
+def test_voice_beam_size_show_set_and_validate(dbdir: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["voice", "beam-size"])
+    assert result.output.strip() == "2"
+    result = runner.invoke(main, ["voice", "beam-size", "5"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "beam-size"])
+    assert result.output.strip() == "5"
+    result = runner.invoke(main, ["voice", "beam-size", "0"])
+    assert result.exit_code != 0

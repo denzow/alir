@@ -10,6 +10,7 @@ VOICEVOX は別プロセスの HTTP API なので、ここではクライアン�
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import urllib.parse
 import urllib.request
@@ -27,10 +28,14 @@ class FasterWhisperTranscriber:
     モデルもロックも接続をまたいで共有し、認識は直列化する(CPU 実行前提)。
     """
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, beam_size: int) -> None:
         self._model_name = model_name
+        self._beam_size = beam_size
         self._model: Any = None
         self._lock = threading.Lock()
+        # faster-whisper 内部の INFO ログ(Processing audio with duration など)は
+        # alir のログ形式と揃わないまま stdout に漏れるため抑制する
+        logging.getLogger("faster_whisper").setLevel(logging.WARNING)
 
     def __call__(self, pcm: bytes) -> str:
         import numpy as np
@@ -43,7 +48,9 @@ class FasterWhisperTranscriber:
                 self._model = WhisperModel(self._model_name, device="cpu", compute_type="int8")
                 _log("voice: whisper モデルのロード完了")
             audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-            segments, _info = self._model.transcribe(audio, language="ja", beam_size=5)
+            segments, _info = self._model.transcribe(
+                audio, language="ja", beam_size=self._beam_size
+            )
             return "".join(segment.text for segment in segments)
 
 
@@ -108,7 +115,9 @@ def build_engines(dbdir: Path) -> voice.Engines | None:
     from pysilero_vad import SileroVoiceActivityDetector
 
     conn = db.connect(dbdir)
-    transcriber = FasterWhisperTranscriber(settings.voice_whisper_model(conn))
+    transcriber = FasterWhisperTranscriber(
+        settings.voice_whisper_model(conn), settings.voice_beam_size(conn)
+    )
     synthesizer = VoicevoxSynthesizer(
         settings.voicevox_url(conn), settings.voice_speaker(conn)
     )

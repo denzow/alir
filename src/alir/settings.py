@@ -54,6 +54,11 @@ DEFAULT_VOICE_SPEAKER = 3
 KEY_VOICE_WHISPER_MODEL = "voice_whisper_model"
 DEFAULT_VOICE_WHISPER_MODEL = "small"
 
+# STT の beam search の幅。大きいほど正確だが認識時間はトークン数に比例して伸びる。
+# CPU 実行のレイテンシを優先して既定は 2(greedy より長い発話に強く、5 より大幅に速い)
+KEY_VOICE_BEAM_SIZE = "voice_beam_size"
+DEFAULT_VOICE_BEAM_SIZE = 2
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -187,6 +192,19 @@ def set_voice_whisper_model(conn: iceql.Connection, model: str) -> None:
     次に serve を起動したときから使われる。
     """
     control.set_value(conn, KEY_VOICE_WHISPER_MODEL, model.strip())
+
+
+def voice_beam_size(conn: iceql.Connection) -> int:
+    """STT の beam search の幅を返す。未設定なら既定値。"""
+    raw = control.get_value(conn, KEY_VOICE_BEAM_SIZE)
+    return DEFAULT_VOICE_BEAM_SIZE if not raw else int(raw)
+
+
+def set_voice_beam_size(conn: iceql.Connection, beam_size: int) -> None:
+    """STT の beam search の幅を設定する。次に serve を起動したときから使われる。"""
+    if beam_size < 1:
+        raise SettingsError("beam size must be >= 1")
+    control.set_value(conn, KEY_VOICE_BEAM_SIZE, str(beam_size))
 
 
 def usage_threshold(conn: iceql.Connection) -> float:
