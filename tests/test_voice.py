@@ -56,6 +56,18 @@ def test_invalid_json_returns_error(dbdir: Path) -> None:
         assert ws.receive_json() == {"type": "error", "message": "invalid json"}
 
 
+def test_non_object_json_returns_error(dbdir: Path) -> None:
+    # "123" は有効な JSON だが object ではない。接続を落とさず error を返す
+    with (
+        TestClient(create_combined_app(dbdir)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_text("123")
+        assert ws.receive_json() == {"type": "error", "message": "invalid frame"}
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+
 def test_unknown_type_returns_error(dbdir: Path) -> None:
     with (
         TestClient(create_combined_app(dbdir)) as client,

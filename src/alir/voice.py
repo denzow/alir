@@ -22,9 +22,13 @@ router = APIRouter()
 async def _handle_control(ws: WebSocket, text: str) -> None:
     """JSON テキストフレーム(制御)に応答する。"""
     try:
-        frame: dict[str, Any] = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
+        frame: Any = json.loads(text)
+    except json.JSONDecodeError:
         await ws.send_json({"type": "error", "message": "invalid json"})
+        return
+    # "123" のような object でない有効な JSON でも接続を落とさず error を返す
+    if not isinstance(frame, dict):
+        await ws.send_json({"type": "error", "message": "invalid frame"})
         return
     kind = frame.get("type")
     if kind == "ping":

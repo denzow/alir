@@ -32,10 +32,10 @@
 
 ### Phase 0: 基盤整備(半日)
 
-- [ ] Tailscale導入、`tailscale cert` によるHTTPS化。uvicornに証明書を渡すか、`tailscale serve` でリバースプロキシ
-- [ ] alir serve に `/voice/ws` WebSocketエンドポイントの骨組みを追加
-- [ ] driver内の通知ポイント(Pushover送信箇所)にイベントバス(`asyncio.Queue` ベースのpub/sub)を注入。既存Pushover通知はバス購読者の一つとして再配置
-- [ ] `alir voice` サブコマンドの雛形(設定の置き場所を確保)
+- [ ] Tailscale導入、`tailscale cert` によるHTTPS化。uvicornに証明書を渡す(`alir serve --ssl-certfile/--ssl-keyfile` は対応済み)か、`tailscale serve` でリバースプロキシ
+- [x] alir serve に `/voice/ws` WebSocketエンドポイントの骨組みを追加
+- [x] driver内の通知ポイント(Pushover送信箇所)にイベントバス(スレッドセーフな同期pub/sub。driverがバックグラウンドスレッドのため、asyncio側の購読者がループへ橋渡しする方式)を注入。既存Pushover通知はバス購読者の一つとして再配置
+- [x] `alir voice` サブコマンドの雛形(設定の置き場所を確保)
 
 完了条件: スマホのChromeから `wss://<host>.ts.net:8710/voice/ws` に接続でき、pingが返る。
 

@@ -479,7 +479,7 @@ def voice_group(ctx: click.Context) -> None:
         if url is None:
             click.echo(f"endpoint: {voice.WS_PATH} (ホストは web-url 未設定のため不明)")
             return
-        ws_url = url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        ws_url = url.rstrip("/").replace("https://", "wss://", 1).replace("http://", "ws://", 1)
         click.echo(f"endpoint: {ws_url}{voice.WS_PATH}")
 
 

@@ -4,8 +4,12 @@
 複数のチャネルへ届けるための pub/sub。通知の発行元(driver・MCP ハンドラ)は
 届け先を知らずに publish だけを行い、チャネル側が購読者として登録する。
 driver はバックグラウンドスレッドで動くため、publish はどのスレッドから
-呼ばれてもよいようにロックで守る。配信は best-effort で、購読者の失敗は
-他の購読者と発行元の処理に影響させない。
+呼ばれてもよいようにロックで守る。購読者は publish 元のスレッドで同期実行される
+ので、asyncio 側の購読者(voice の WS 配送など)はコールバック内で
+loop.call_soon_threadsafe などを使ってイベントループへ橋渡しする。
+配信は best-effort で、購読者の失敗は他の購読者と発行元の処理に影響させない。
+既定の購読者(Pushover・デスクトップ)は notify の import 時に登録されるため、
+バスへ publish する側は notify 経由の通知関数を使うか、notify を import しておく。
 """
 
 from __future__ import annotations
