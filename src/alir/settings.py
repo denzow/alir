@@ -42,6 +42,23 @@ KEY_PUSHOVER = "pushover"
 # 未設定なら環境変数(ALIR_WEB_URL)にフォールバックする
 KEY_WEB_URL = "web_url"
 
+# voice の TTS に使う VOICEVOX engine の URL
+KEY_VOICEVOX_URL = "voicevox_url"
+DEFAULT_VOICEVOX_URL = "http://127.0.0.1:50021"
+
+# VOICEVOX の話者(speaker) ID。既定はずんだもん(ノーマル)
+KEY_VOICE_SPEAKER = "voice_speaker"
+DEFAULT_VOICE_SPEAKER = 3
+
+# voice の STT に使う faster-whisper のモデル名(small / medium など)
+KEY_VOICE_WHISPER_MODEL = "voice_whisper_model"
+DEFAULT_VOICE_WHISPER_MODEL = "small"
+
+# STT の beam search の幅。大きいほど正確だが認識時間はトークン数に比例して伸びる。
+# CPU 実行のレイテンシを優先して既定は 2(greedy より長い発話に強く、5 より大幅に速い)
+KEY_VOICE_BEAM_SIZE = "voice_beam_size"
+DEFAULT_VOICE_BEAM_SIZE = 2
+
 # ドライバが埋める変数
 _DRIVER_PLACEHOLDERS = {"number", "id", "repo"}
 # セッション(実装する Claude)が決めて git branch -m で反映する変数と、その仮の値
@@ -135,6 +152,59 @@ def set_model(conn: iceql.Connection, model: str) -> None:
 def clear_model(conn: iceql.Connection) -> None:
     """モデル名の設定を消し、claude の既定に戻す。"""
     control.set_value(conn, KEY_MODEL, "")
+
+
+def voicevox_url(conn: iceql.Connection) -> str:
+    """VOICEVOX engine の URL を返す。未設定なら既定のローカル URL。"""
+    return control.get_value(conn, KEY_VOICEVOX_URL) or DEFAULT_VOICEVOX_URL
+
+
+def set_voicevox_url(conn: iceql.Connection, url: str) -> None:
+    """VOICEVOX engine の URL を設定する。空文字で既定に戻す。"""
+    url = url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        raise SettingsError("voicevox url must start with http:// or https://")
+    control.set_value(conn, KEY_VOICEVOX_URL, url.rstrip("/"))
+
+
+def voice_speaker(conn: iceql.Connection) -> int:
+    """VOICEVOX の話者 ID を返す。未設定なら既定値。"""
+    raw = control.get_value(conn, KEY_VOICE_SPEAKER)
+    return DEFAULT_VOICE_SPEAKER if not raw else int(raw)
+
+
+def set_voice_speaker(conn: iceql.Connection, speaker: int) -> None:
+    """VOICEVOX の話者 ID を設定する。"""
+    if speaker < 0:
+        raise SettingsError("speaker id must be >= 0")
+    control.set_value(conn, KEY_VOICE_SPEAKER, str(speaker))
+
+
+def voice_whisper_model(conn: iceql.Connection) -> str:
+    """STT に使う faster-whisper のモデル名を返す。未設定なら既定値。"""
+    return control.get_value(conn, KEY_VOICE_WHISPER_MODEL) or DEFAULT_VOICE_WHISPER_MODEL
+
+
+def set_voice_whisper_model(conn: iceql.Connection, model: str) -> None:
+    """STT に使う faster-whisper のモデル名を設定する。空文字で既定に戻す。
+
+    モデル名の妥当性は検証しない(faster-whisper 側が解釈する)。
+    次に serve を起動したときから使われる。
+    """
+    control.set_value(conn, KEY_VOICE_WHISPER_MODEL, model.strip())
+
+
+def voice_beam_size(conn: iceql.Connection) -> int:
+    """STT の beam search の幅を返す。未設定なら既定値。"""
+    raw = control.get_value(conn, KEY_VOICE_BEAM_SIZE)
+    return DEFAULT_VOICE_BEAM_SIZE if not raw else int(raw)
+
+
+def set_voice_beam_size(conn: iceql.Connection, beam_size: int) -> None:
+    """STT の beam search の幅を設定する。次に serve を起動したときから使われる。"""
+    if beam_size < 1:
+        raise SettingsError("beam size must be >= 1")
+    control.set_value(conn, KEY_VOICE_BEAM_SIZE, str(beam_size))
 
 
 def usage_threshold(conn: iceql.Connection) -> float:

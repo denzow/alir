@@ -43,12 +43,12 @@
 
 まず「話した内容がテキスト化され、そのまま合成音声でオウム返しされる」ループだけを通す。意図解釈はまだ載せない。
 
-- [ ] PWA通話画面: 「通話開始」ボタン → `getUserMedia`(echoCancellation: true)→ AudioWorkletで16kHz/mono/16bit PCMに変換しWS送信
-- [ ] Screen Wake Lock API で画面常時点灯。`visibilitychange` での再接続処理
-- [ ] サーバ: silero-VADで発話区間を検出し、区間確定ごとにfaster-whisper(まずは `small`、品質不足なら `medium`)でSTT
-- [ ] VOICEVOX engineをローカルで起動(Docker可)。認識テキストをそのまま合成してWSでクライアントへ返す
-- [ ] クライアント: 受信音声フレームを再生キューで順次再生
-- [ ] barge-inの土台: サーバがVADで発話開始を検出したら `{"type": "interrupt"}` を送り、クライアントは再生キューを破棄
+- [x] PWA通話画面: 「通話開始」ボタン → `getUserMedia`(echoCancellation: true)→ AudioWorkletで16kHz/mono/16bit PCMに変換しWS送信(`/voice` で配信)
+- [x] Screen Wake Lock API で画面常時点灯。`visibilitychange` での再接続処理
+- [x] サーバ: silero-VADで発話区間を検出し、区間確定ごとにfaster-whisper(まずは `small`、品質不足なら `medium`。`alir voice whisper-model` で変更)でSTT。依存は voice extra(`uv sync --extra voice`)に隔離
+- [x] 認識テキストをVOICEVOXで合成してWSでクライアントへ返す(engineの起動は運用側。接続先は `alir voice voicevox-url`、話者は `alir voice speaker` で設定)
+- [x] クライアント: 受信音声フレームを再生キューで順次再生
+- [x] barge-inの土台: サーバがVADで発話開始を検出したら `{"type": "interrupt"}` を送り、クライアントは再生キューを破棄
 
 完了条件: スマホに話しかけると1〜2秒でオウム返しが返る。往復レイテンシを計測してログに残す。
 

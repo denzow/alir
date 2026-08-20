@@ -470,7 +470,7 @@ def resume_disable() -> None:
 def voice_group(ctx: click.Context) -> None:
     """音声インターフェース(通話クライアント)を操作する。サブコマンドなしなら接続先を表示する。
 
-    通話画面や読み上げポリシーの設定は後続フェーズでここに足す。
+    読み上げポリシーの設定は後続フェーズでここに足す。
     """
     if ctx.invoked_subcommand is None:
         from alir import notify, voice
@@ -479,8 +479,83 @@ def voice_group(ctx: click.Context) -> None:
         if url is None:
             click.echo(f"endpoint: {voice.WS_PATH} (ホストは web-url 未設定のため不明)")
             return
-        ws_url = url.rstrip("/").replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        base = url.rstrip("/")
+        ws_url = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        click.echo(f"page: {base}{voice.PAGE_PATH}")
         click.echo(f"endpoint: {ws_url}{voice.WS_PATH}")
+
+
+@voice_group.command("status")
+def voice_status() -> None:
+    """音声処理の構成(依存の導入状況・VOICEVOX の疎通・設定値)を表示する。"""
+    from alir import voice_engines
+
+    conn = db.connect(data_dir())
+    available, detail = voice_engines.voice_available()
+    click.echo(f"voice extra: {'installed' if available else detail}")
+    url = settings.voicevox_url(conn)
+    version = voice_engines.voicevox_version(url)
+    click.echo(f"voicevox: {url} ({'v' + version if version else 'unreachable'})")
+    click.echo(f"speaker: {settings.voice_speaker(conn)}")
+    click.echo(f"whisper model: {settings.voice_whisper_model(conn)}")
+    click.echo(f"beam size: {settings.voice_beam_size(conn)}")
+
+
+@voice_group.command("voicevox-url")
+@click.argument("url", required=False)
+def voice_voicevox_url(url: str | None) -> None:
+    """VOICEVOX engine の URL を表示・設定する。次に serve を起動したときから使われる。"""
+    conn = db.connect(data_dir())
+    if url is None:
+        click.echo(settings.voicevox_url(conn))
+        return
+    try:
+        settings.set_voicevox_url(conn, url)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {settings.voicevox_url(conn)}")
+
+
+@voice_group.command("speaker")
+@click.argument("speaker_id", type=int, required=False)
+def voice_speaker_cmd(speaker_id: int | None) -> None:
+    """VOICEVOX の話者 ID を表示・設定する。ID は VOICEVOX の /speakers で調べられる。"""
+    conn = db.connect(data_dir())
+    if speaker_id is None:
+        click.echo(str(settings.voice_speaker(conn)))
+        return
+    try:
+        settings.set_voice_speaker(conn, speaker_id)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {speaker_id}")
+
+
+@voice_group.command("whisper-model")
+@click.argument("model", required=False)
+def voice_whisper_model_cmd(model: str | None) -> None:
+    """STT に使う faster-whisper のモデル名(small / medium など)を表示・設定する。"""
+    conn = db.connect(data_dir())
+    if model is None:
+        click.echo(settings.voice_whisper_model(conn))
+        return
+    settings.set_voice_whisper_model(conn, model)
+    click.echo(f"set: {settings.voice_whisper_model(conn)}")
+
+
+@voice_group.command("beam-size")
+@click.argument("beam_size", type=int, required=False)
+def voice_beam_size_cmd(beam_size: int | None) -> None:
+    """STT の beam search の幅を表示・設定する。大きいほど正確だが認識が遅くなる。"""
+    conn = db.connect(data_dir())
+    if beam_size is None:
+        click.echo(str(settings.voice_beam_size(conn)))
+        return
+    try:
+        settings.set_voice_beam_size(conn, beam_size)
+    except SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"set: {beam_size}")
 
 
 def _run_options(f: Callable[..., None]) -> Callable[..., None]:
