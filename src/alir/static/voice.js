@@ -8,6 +8,7 @@ const SAMPLE_RATE = 16000;
 const state = {
   calling: false,
   ws: null,
+  reconnectTimer: null,
   audioCtx: null,      // マイク取り込み用(16kHz 固定)
   playCtx: null,       // 再生用(端末ネイティブレート。VOICEVOX の 24kHz WAV を decode に任せる)
   stream: null,
@@ -72,6 +73,8 @@ async function openMicrophone() {
 }
 
 function connect() {
+  // 再接続タイマーと visibilitychange の両方から呼ばれるため、二重コネクトを防ぐ
+  if (state.ws && state.ws.readyState !== WebSocket.CLOSED) return;
   const scheme = location.protocol === "https:" ? "wss://" : "ws://";
   const ws = new WebSocket(scheme + location.host + "/voice/ws");
   ws.binaryType = "arraybuffer";
@@ -82,14 +85,23 @@ function connect() {
   };
   ws.onmessage = onMessage;
   ws.onclose = () => {
+    resetReceiveState();
     if (state.calling) {
       setStatus("再接続中…");
-      setTimeout(() => {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = setTimeout(() => {
         if (state.calling) connect();
       }, 2000);
     }
   };
   ws.onerror = () => ws.close();
+}
+
+function resetReceiveState() {
+  // audio_start〜audio_end の途中で切れたときにチャンクを持ち越さない
+  state.receivingAudio = false;
+  state.discarding = false;
+  state.audioChunks = [];
 }
 
 function onMessage(e) {
@@ -173,11 +185,24 @@ function stopPlayback() {
   }
 }
 
+function releaseMicrophone() {
+  if (state.stream) {
+    state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = null;
+  }
+  if (state.audioCtx) {
+    state.audioCtx.close();
+    state.audioCtx = null;
+  }
+}
+
 async function startCall() {
   callEl.disabled = true;
   try {
     await openMicrophone();
   } catch (err) {
+    // 許可拒否などで途中失敗しても AudioContext を増やしたまま残さない
+    releaseMicrophone();
     log("⚠ マイクを開けない: " + err, true);
     callEl.disabled = false;
     return;
@@ -192,20 +217,19 @@ async function startCall() {
 
 function stopCall() {
   state.calling = false;
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify({ type: "stop" }));
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  if (state.ws) {
+    if (state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "stop" }));
+    }
+    // CONNECTING 中でも close は合法。閉じ忘れると後から open して start を送ってしまう
     state.ws.close();
+    state.ws = null;
   }
-  state.ws = null;
   stopPlayback();
-  if (state.stream) {
-    state.stream.getTracks().forEach((t) => t.stop());
-    state.stream = null;
-  }
-  if (state.audioCtx) {
-    state.audioCtx.close();
-    state.audioCtx = null;
-  }
+  resetReceiveState();
+  releaseMicrophone();
   if (state.wakeLock) {
     state.wakeLock.release();
     state.wakeLock = null;
@@ -228,5 +252,5 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !state.calling) return;
   acquireWakeLock();
   if (state.audioCtx && state.audioCtx.state === "suspended") state.audioCtx.resume();
-  if (!state.ws || state.ws.readyState === WebSocket.CLOSED) connect();
+  connect(); // 既に接続があれば connect 側の二重コネクト防止で何もしない
 });

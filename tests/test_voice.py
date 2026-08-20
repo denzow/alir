@@ -200,6 +200,18 @@ def test_synthesizer_failure_keeps_connection(dbdir: Path) -> None:
         assert ws.receive_json() == {"type": "pong"}
 
 
+def test_oversized_input_frame_is_ignored(dbdir: Path) -> None:
+    """上限を超える上りフレームは VAD にかけず無視する(受信ループの保護)。"""
+    with (
+        TestClient(make_app(dbdir, make_engines())) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_bytes(b"\x01" * (64 * 1024 + 1))  # 発話相当のバイト列だが無視される
+        ws.send_json({"type": "ping"})
+        # interrupt が来ない(= VAD に届いていない)ことを応答順で確かめる
+        assert ws.receive_json() == {"type": "pong"}
+
+
 def test_voice_page_is_served(dbdir: Path) -> None:
     with TestClient(make_app(dbdir, None)) as client:
         res = client.get(voice.PAGE_PATH)

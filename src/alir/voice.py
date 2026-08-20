@@ -14,11 +14,13 @@ STT・TTS は重いので接続ごとのワーカタスクに逃がし、受信�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -162,6 +164,14 @@ class Engines:
 # TTS 音声(WAV)を送るときの 1 フレームの大きさ
 _AUDIO_FRAME_BYTES = 32768
 
+# 上り(マイク PCM)フレームの上限。クライアントは 2KB(1024 サンプル)ずつ送るので
+# 十分大きく、巨大フレームで VAD が受信ループを長時間止めるのを防ぐ
+_MAX_INPUT_FRAME_BYTES = 65536
+
+# 未処理の確定区間を溜める上限。STT が追いつかないときは新しい区間を捨て、
+# メモリを際限なく消費しないようにする
+_SEGMENT_QUEUE_SIZE = 8
+
 
 class _Connection:
     """1 接続分の状態。送信は複数タスク(受信ループとワーカ)から行うためロックで直列化する。"""
@@ -169,7 +179,7 @@ class _Connection:
     def __init__(self, ws: WebSocket, engines: Engines | None) -> None:
         self.ws = ws
         self.engines = engines
-        self.segments: asyncio.Queue[bytes] = asyncio.Queue()
+        self.segments: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_SEGMENT_QUEUE_SIZE)
         self.segmenter: Segmenter | None = None
         self._send_lock = asyncio.Lock()
         if engines is not None:
@@ -215,49 +225,63 @@ async def _handle_control(conn: _Connection, text: str) -> None:
     elif kind == "stop":
         if conn.segmenter is not None:
             conn.segmenter.reset()
+        # マイク停止後に古い区間の返答が届かないよう、未処理の区間も捨てる
+        while not conn.segments.empty():
+            conn.segments.get_nowait()
         await conn.send_json({"type": "stopped"})
     else:
         await conn.send_json({"type": "error", "message": f"unknown type: {kind}"})
 
 
 async def _segment_worker(conn: _Connection) -> None:
-    """確定した発話区間を STT → TTS して返送する。受信ループとは独立に動く。"""
-    engines = conn.engines
-    assert engines is not None
+    """確定した発話区間を STT → TTS して返送する。受信ループとは独立に動く。
+
+    送信の失敗(切断との競合)はここで捕まえてワーカを終える。放置すると
+    「回収されない例外を持つタスク」になり、以後の区間がキューに溜まるだけになる。
+    """
     while True:
         pcm = await conn.segments.get()
-        started = time.monotonic()
         try:
-            text = (await asyncio.to_thread(engines.transcriber, pcm)).strip()
-        except Exception as exc:  # noqa: BLE001 - 認識失敗で接続は落とさない
-            _log(f"voice: STT に失敗した: {exc}")
-            continue
-        stt_ms = int((time.monotonic() - started) * 1000)
-        if not text:
-            continue
-        await conn.send_json({"type": "stt_final", "text": text})
-        tts_started = time.monotonic()
-        try:
-            wav = await asyncio.to_thread(engines.synthesizer, text)
-        except Exception as exc:  # noqa: BLE001 - 合成失敗でも字幕(stt_final)は届いている
-            _log(f"voice: TTS に失敗した: {exc}")
-            continue
-        tts_ms = int((time.monotonic() - tts_started) * 1000)
-        await conn.send_json({"type": "audio_start"})
-        for i in range(0, len(wav), _AUDIO_FRAME_BYTES):
-            await conn.send_bytes(wav[i : i + _AUDIO_FRAME_BYTES])
-        await conn.send_json({"type": "audio_end"})
-        # 完了条件のレイテンシ計測(voice-plan.md)。区間長は 16kHz/16bit なので 32 バイト = 1ms
-        _log(
-            f"voice: 区間 {len(pcm) // 32}ms を認識 {stt_ms}ms 合成 {tts_ms}ms 「{text}」"
-        )
+            await _reply_segment(conn, pcm)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 送信失敗は切断とみなす
+            _log(f"voice: 返送に失敗したためワーカを止める: {exc}")
+            return
+
+
+async def _reply_segment(conn: _Connection, pcm: bytes) -> None:
+    """1 区間を STT → TTS して返送する。STT・TTS の失敗はログだけ残して区間を捨てる。"""
+    engines = conn.engines
+    assert engines is not None
+    started = time.monotonic()
+    try:
+        text = (await asyncio.to_thread(engines.transcriber, pcm)).strip()
+    except Exception as exc:  # noqa: BLE001 - 認識失敗で接続は落とさない
+        _log(f"voice: STT に失敗した: {exc}")
+        return
+    stt_ms = int((time.monotonic() - started) * 1000)
+    if not text:
+        return
+    await conn.send_json({"type": "stt_final", "text": text})
+    tts_started = time.monotonic()
+    try:
+        wav = await asyncio.to_thread(engines.synthesizer, text)
+    except Exception as exc:  # noqa: BLE001 - 合成失敗でも字幕(stt_final)は届いている
+        _log(f"voice: TTS に失敗した: {exc}")
+        return
+    tts_ms = int((time.monotonic() - tts_started) * 1000)
+    await conn.send_json({"type": "audio_start"})
+    for i in range(0, len(wav), _AUDIO_FRAME_BYTES):
+        await conn.send_bytes(wav[i : i + _AUDIO_FRAME_BYTES])
+    await conn.send_json({"type": "audio_end"})
+    # 完了条件のレイテンシ計測(voice-plan.md)。区間長は 16kHz/16bit なので 32 バイト = 1ms
+    _log(f"voice: 区間 {len(pcm) // 32}ms を認識 {stt_ms}ms 合成 {tts_ms}ms 「{text}」")
 
 
 @router.get(PAGE_PATH, include_in_schema=False)
 async def voice_page() -> FileResponse:
     """通話画面(素の HTML/JS。テンプレートを使わない単独ページ)。"""
-    from pathlib import Path
-
     return FileResponse(Path(__file__).parent / "static" / "voice.html")
 
 
@@ -284,10 +308,15 @@ async def voice_ws(ws: WebSocket) -> None:
                 continue
             data = message.get("bytes")
             if data and conn.segmenter is not None:
+                if len(data) > _MAX_INPUT_FRAME_BYTES:
+                    _log(f"voice: {len(data)} バイトの上りフレームを無視した")
+                    continue
                 for event in conn.segmenter.feed(data):
                     if isinstance(event, SpeechStart):
                         # 発話開始でクライアントの再生キューを破棄させる(barge-in)
                         await conn.send_json({"type": "interrupt"})
+                    elif conn.segments.full():
+                        _log("voice: STT が追いつかず確定区間を捨てた")
                     else:
                         conn.segments.put_nowait(event.audio)
     except WebSocketDisconnect:
@@ -295,3 +324,5 @@ async def voice_ws(ws: WebSocket) -> None:
     finally:
         if worker is not None:
             worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker
