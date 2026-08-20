@@ -126,6 +126,53 @@ def test_notify_issue_failed_message(dbdir: Path, monkeypatch: pytest.MonkeyPatc
     assert sent[1] == f"#{issue.id} {issue.ref}: 処理が失敗した: git worktree add failed: boom"
 
 
+def test_notify_question_publishes_event_and_delivers(
+    dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import events, questions
+
+    q = questions.ask(
+        db.connect(dbdir),
+        issue="denzow/alir#1",
+        question="スキーマを変えてよいか",
+        options=["変える", "変えない"],
+        recommended="変える",
+        impact="high",
+        timeout_action="keep_parked",
+    )
+    delivered: list[str] = []
+    monkeypatch.setattr(notify, "notify_message", lambda m: delivered.append(m))
+    received: list[events.Event] = []
+    unsubscribe = events.bus.subscribe(received.append)
+    try:
+        notify.notify_question(q)
+    finally:
+        unsubscribe()
+    # 追加の購読者(voice など)にイベントが届き、既定の Pushover 配信も同時に走る
+    assert [e.kind for e in received] == [events.KIND_QUESTION]
+    assert received[0].data["question_id"] == q.id
+    assert delivered == [notify.build_message(q)]
+
+
+def test_notify_retry_exhausted_publishes_event(
+    dbdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alir import events, registry
+
+    issue = registry.add(
+        db.connect(dbdir), url="https://github.com/denzow/alir/issues/12", workdir="/tmp/a"
+    )
+    monkeypatch.setattr(notify, "notify_message", lambda m: None)
+    received: list[events.Event] = []
+    unsubscribe = events.bus.subscribe(received.append)
+    try:
+        notify.notify_retry_exhausted(issue, 3)
+    finally:
+        unsubscribe()
+    assert [e.kind for e in received] == [events.KIND_RETRY_EXHAUSTED]
+    assert received[0].data["limit"] == 3
+
+
 def test_web_url_falls_back_to_auto_detected(dbdir: Path) -> None:
     from alir import control
 

@@ -95,7 +95,12 @@ def _notify_address(host: str, detect: Callable[[], str | None]) -> str | None:
 
 
 def record_auto_web_url(
-    dbdir: Path, host: str, port: int, *, detect: Callable[[], str | None] = lan_ip
+    dbdir: Path,
+    host: str,
+    port: int,
+    *,
+    detect: Callable[[], str | None] = lan_ip,
+    scheme: str = "http",
 ) -> str | None:
     """自動検出した Web UI の URL を control に記録し、その URL を返す。
 
@@ -103,6 +108,7 @@ def record_auto_web_url(
     どちらも未設定のときこの記録を使う。bind 先が特定のアドレスならそれを、
     ワイルドカードなら LAN 内 IP の推定値を使う。検出できないときと
     loopback バインドのときは記録を消し、届かないアドレスを通知に載せない。
+    scheme は TLS 証明書つきで起動したとき(serve --ssl-certfile)に https になる。
     """
     address = _notify_address(host, detect)
     conn = db.connect(dbdir)
@@ -112,7 +118,7 @@ def record_auto_web_url(
     if ":" in address:
         # IPv6 リテラルは URL ではブラケットで囲む
         address = f"[{address}]"
-    url = f"http://{address}:{port}"
+    url = f"{scheme}://{address}:{port}"
     control.set_value(conn, control.KEY_WEB_URL_AUTO, url)
     return url
 
