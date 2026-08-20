@@ -347,3 +347,46 @@ def test_web_url_set_requires_scheme(dbdir: Path) -> None:
     result = CliRunner().invoke(main, ["web-url", "set", "192.168.1.10:8710"])
     assert result.exit_code != 0
     assert "http://" in result.output
+
+
+def test_voice_shows_endpoint(dbdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ALIR_WEB_URL", "https://host.ts.net:8710")
+    result = CliRunner().invoke(main, ["voice"])
+    assert result.exit_code == 0
+    assert "page: https://host.ts.net:8710/voice" in result.output
+    assert "endpoint: wss://host.ts.net:8710/voice/ws" in result.output
+
+
+def test_voice_voicevox_url_show_and_set(dbdir: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["voice", "voicevox-url"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "http://127.0.0.1:50021"
+
+    result = runner.invoke(main, ["voice", "voicevox-url", "http://voicevox:50021/"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "voicevox-url"])
+    assert result.output.strip() == "http://voicevox:50021"
+
+    result = runner.invoke(main, ["voice", "voicevox-url", "voicevox:50021"])
+    assert result.exit_code != 0
+
+
+def test_voice_speaker_show_and_set(dbdir: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["voice", "speaker"])
+    assert result.output.strip() == "3"
+    result = runner.invoke(main, ["voice", "speaker", "8"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "speaker"])
+    assert result.output.strip() == "8"
+
+
+def test_voice_whisper_model_show_and_set(dbdir: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["voice", "whisper-model"])
+    assert result.output.strip() == "small"
+    result = runner.invoke(main, ["voice", "whisper-model", "medium"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "whisper-model"])
+    assert result.output.strip() == "medium"

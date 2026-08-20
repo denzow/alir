@@ -21,6 +21,13 @@ dependencies = [
 [project.scripts]
 alir = "alir.cli:main"
 
+[project.optional-dependencies]
+voice = [
+    "faster-whisper>=1.2.1",
+    "pysilero-vad>=3.4.0",
+    "numpy>=1.26",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
@@ -46,8 +53,15 @@ strict = true
 files = ["src/alir"]
 
 [[tool.mypy.overrides]]
-module = ["mcp.*", "iceql.*"]
+module = ["mcp.*", "iceql.*", "pysilero_vad.*", "faster_whisper.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy 2.x の型スタブは Python 3.12 以降の type 文を使っており、
+# python_version = 3.10 の解析では読めないためスタブを追わない
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
