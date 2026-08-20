@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from alir import voice
+from alir import db, events, notify, settings, voice
 from alir.serve import create_combined_app
 from alir.voice import WS_PATH, Engines, Segmenter, SegmenterConfig, SpeechSegment, SpeechStart
 
@@ -28,7 +29,10 @@ def fake_probe(chunk: bytes) -> float:
     return 1.0 if any(chunk) else 0.0
 
 
-def make_engines(transcribed: list[bytes] | None = None) -> Engines:
+def make_engines(
+    transcribed: list[bytes] | None = None,
+    summarizer: Callable[[events.Event], str] | None = None,
+) -> Engines:
     def transcriber(pcm: bytes) -> str:
         if transcribed is not None:
             transcribed.append(pcm)
@@ -40,6 +44,7 @@ def make_engines(transcribed: list[bytes] | None = None) -> Engines:
         synthesizer=lambda text: b"WAV:" + text.encode(),
         chunk_bytes=CHUNK,
         segmenter_config=CONFIG,
+        summarizer=summarizer,
     )
 
 
@@ -210,6 +215,111 @@ def test_oversized_input_frame_is_ignored(dbdir: Path) -> None:
         ws.send_json({"type": "ping"})
         # interrupt が来ない(= VAD に届いていない)ことを応答順で確かめる
         assert ws.receive_json() == {"type": "pong"}
+
+
+# --- driver イベントの読み上げ(Phase 2) ---
+
+
+@pytest.fixture
+def quiet_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """バスへの publish が Pushover・デスクトップ通知に流れないようにする。"""
+    monkeypatch.setattr(notify, "notify_message", lambda message: None)
+
+
+def test_bus_event_is_spoken_with_summary(dbdir: Path, quiet_push: None) -> None:
+    """question イベント(既定 speak)は要約が字幕と合成音声で届く。"""
+    engines = make_engines(summarizer=lambda event: "要約です")
+    with (
+        TestClient(make_app(dbdir, engines)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}  # 購読が済んでいることの同期
+        events.bus.publish(
+            events.Event(kind=events.KIND_QUESTION, message="#1 denzow/alir#1: 質問", data={})
+        )
+        assert ws.receive_json() == {
+            "type": "event",
+            "kind": "question",
+            "policy": "speak",
+            "text": "要約です",
+        }
+        assert ws.receive_json() == {"type": "audio_start"}
+        assert ws.receive_bytes() == b"WAV:" + "要約です".encode()
+        assert ws.receive_json() == {"type": "audio_end"}
+
+
+def test_bus_event_chime_policy_sends_no_audio(dbdir: Path, quiet_push: None) -> None:
+    """session_done(既定 chime)は字幕だけ届き、音声は送られない。"""
+    with (
+        TestClient(make_app(dbdir, make_engines())) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        events.bus.publish(
+            events.Event(kind=events.KIND_SESSION_DONE, message="#1 完了", data={})
+        )
+        assert ws.receive_json() == {
+            "type": "event",
+            "kind": "session_done",
+            "policy": "chime",
+            "text": "#1 完了",
+        }
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}  # audio_start が来ていない
+
+
+def test_bus_event_silent_policy_sends_nothing(dbdir: Path, quiet_push: None) -> None:
+    settings.set_voice_notify(db.connect(dbdir), {"question": "silent"})
+    with (
+        TestClient(make_app(dbdir, make_engines())) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        events.bus.publish(events.Event(kind=events.KIND_QUESTION, message="質問", data={}))
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+
+def test_bus_event_speak_degrades_to_chime_without_engines(
+    dbdir: Path, quiet_push: None
+) -> None:
+    """voice extra 未導入(Engines なし)でも、チャイムと字幕は届く。"""
+    with (
+        TestClient(make_app(dbdir, None)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        events.bus.publish(events.Event(kind=events.KIND_QUESTION, message="質問", data={}))
+        assert ws.receive_json() == {
+            "type": "event",
+            "kind": "question",
+            "policy": "chime",
+            "text": "質問",
+        }
+
+
+def test_bus_event_summarizer_failure_falls_back_to_message(
+    dbdir: Path, quiet_push: None
+) -> None:
+    def broken_summarizer(event: events.Event) -> str:
+        raise RuntimeError("claude down")
+
+    engines = make_engines(summarizer=broken_summarizer)
+    with (
+        TestClient(make_app(dbdir, engines)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        events.bus.publish(events.Event(kind=events.KIND_QUESTION, message="質問", data={}))
+        frame = ws.receive_json()
+        assert frame["type"] == "event"
+        assert frame["text"] == "質問"  # 要約に失敗しても message で読み上げる
+        assert ws.receive_json() == {"type": "audio_start"}
 
 
 def test_voice_page_is_served(dbdir: Path) -> None:
