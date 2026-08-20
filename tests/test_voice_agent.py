@@ -41,6 +41,7 @@ def test_propose_and_execute_answer(dbdir: Path) -> None:
     assert "変更する" in result
     assert state.pending is not None
 
+    state.turn += 1  # ユーザーの肯定の発話に相当
     result = voice_agent.tool_execute_pending(conn, state)
     assert f"質問 #{q.id}" in result
     assert state.pending is None
@@ -48,6 +49,24 @@ def test_propose_and_execute_answer(dbdir: Path) -> None:
     assert answered.status == questions.STATUS_ANSWERED
     assert answered.answer == "変更する"
     assert answered.answer_note == "API 層に限定"
+
+
+def test_execute_in_same_turn_is_rejected(dbdir: Path) -> None:
+    """propose と同じ発話内の execute は拒否され、確認待ちは残る。"""
+    q = _ask(dbdir)
+    state = AgentState()
+    conn = db.connect(dbdir)
+    voice_agent.tool_propose_answer(conn, state, question_id=q.id, choice="1")
+    result = voice_agent.tool_execute_pending(conn, state)
+    assert "同じ発話内では実行できない" in result
+    assert state.pending is not None  # 確認待ちは消えない
+    assert questions.get(conn, q.id).status == questions.STATUS_OPEN
+
+    # 次の発話(肯定)では実行できる
+    state.turn += 1
+    result = voice_agent.tool_execute_pending(conn, state)
+    assert f"質問 #{q.id}" in result
+    assert questions.get(db.connect(dbdir), q.id).status == questions.STATUS_ANSWERED
 
 
 def test_propose_answer_rejects_missing_or_closed(dbdir: Path) -> None:
@@ -94,6 +113,7 @@ def test_propose_issue_resolves_number_from_known_repo(
     assert state.pending.payload["workdir"] == "/tmp/a"
 
     monkeypatch.setattr(voice_agent.registry, "fetch_title", lambda url: "音声対応")
+    state.turn += 1  # ユーザーの肯定の発話に相当
     result = voice_agent.tool_execute_pending(conn, state)
     assert "denzow/alir#45" in result
     added = [i for i in registry.list_issues(db.connect(dbdir)) if i.number == 45]

@@ -6,14 +6,18 @@ claude-agent-sdk の常駐セッション(ClaudeSDKClient)を使い、`claude -p
 
 状態を変える操作(質問回答・Issue 登録)は propose → ユーザーの肯定 → execute の
 2 段のツールプロトコルにする。STT の誤認識をそのまま実行しないための構造で、
-execute は直前に propose した内容だけを実行するため、確認後にパラメータが
-すり替わることもない。エージェントには組み込みツールを与えず、ここで定義した
-ツールしか呼べない。
+execute は「propose と別の発話」でだけ成立する(同一発話内の連続呼び出しは拒否する)。
+これにより、質問本文などに紛れた指示でエージェントが確認を飛ばそうとしても、
+ユーザーの発話を一度はさまない限り実行できない。execute は直前に propose した
+内容だけを実行するため、確認後にパラメータがすり替わることもない。
+エージェントには組み込みツールを与えず、ここで定義したツールしか呼べない。
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,8 +29,14 @@ from alir.driver import log_with_timestamp as _log
 from alir.questions import QuestionError
 from alir.registry import RegistryError
 
-# 1 発話あたりのエージェントのターン上限(ツール呼び出しの暴走止め)
-_MAX_TURNS = 10
+# セッション累積のターン上限(ツール呼び出しの暴走止め)。SDK の max_turns は
+# 発話ごとではなく常駐セッション全体で数えるため、会話が続く前提で大きめに取る。
+# 上限に達したら reply() がセッションを立ち上げ直す
+_MAX_TURNS = 50
+
+# claude CLI プロセスが固まったときに disconnect 待ちで WS ハンドラが
+# 終わらなくならないための猶予
+_CLOSE_TIMEOUT = 10.0
 
 _SYSTEM_PROMPT = """\
 あなたは alir(GitHub Issue を自律処理するループ)の音声アシスタント。
@@ -46,18 +56,29 @@ _SYSTEM_PROMPT = """\
 
 @dataclass
 class PendingAction:
-    """確認待ちの操作。description は復唱に使う文。"""
+    """確認待ちの操作。description は復唱に使う文。
+
+    proposed_turn は propose した発話の番号。execute が同じ発話内で
+    呼ばれたら拒否するために使う(確認フローの構造的な保証)。
+    """
 
     kind: str  # "answer" / "add_issue"
     description: str
     payload: dict[str, Any]
+    proposed_turn: int
 
 
 class AgentState:
-    """1 セッション分の状態。確認待ちの操作を 1 件だけ持つ。"""
+    """1 セッション分の状態。確認待ちの操作を 1 件だけ持つ。
+
+    turn は reply() が発話ごとに進める番号。pending の読み書きは
+    ワーカースレッド(db.run_in_thread)から来るためロックで守る。
+    """
 
     def __init__(self) -> None:
         self.pending: PendingAction | None = None
+        self.turn = 0
+        self.lock = threading.Lock()
 
 
 # --- ツール本体(プレーンな関数。エージェントには例外を見せず文字列で返す) ---
@@ -81,7 +102,8 @@ def tool_list_questions(conn: iceql.Connection) -> str:
 
 def tool_list_issues(conn: iceql.Connection) -> str:
     """Issue レジストリの直近の状況を一覧する。"""
-    items = registry.list_issues(conn)
+    # list_issues は priority 順なので、「直近」は id 順に並べ直してから取る
+    items = sorted(registry.list_issues(conn), key=lambda i: i.id)
     if not items:
         return "登録された Issue はない"
     lines = [
@@ -126,12 +148,15 @@ def tool_propose_answer(
     if choice.isdigit() and 1 <= int(choice) <= len(q.options):
         display = q.options[int(choice) - 1]
     note_text = f"、補足は「{note}」" if note else ""
-    state.pending = PendingAction(
-        kind="answer",
-        description=f"質問 #{q.id}({q.issue})に「{display}」で回答{note_text}",
-        payload={"question_id": question_id, "choice": choice, "note": note},
-    )
-    return f"確認待ちにした: {state.pending.description}。ユーザーに復唱して確認を求めること"
+    with state.lock:
+        state.pending = PendingAction(
+            kind="answer",
+            description=f"質問 #{q.id}({q.issue})に「{display}」で回答{note_text}",
+            payload={"question_id": question_id, "choice": choice, "note": note},
+            proposed_turn=state.turn,
+        )
+        description = state.pending.description
+    return f"確認待ちにした: {description}。ユーザーに復唱して確認を求めること"
 
 
 def tool_propose_issue(
@@ -143,7 +168,8 @@ def tool_propose_issue(
 ) -> str:
     """Issue の登録を確認待ちとして登録する。番号だけなら既知のリポジトリで解決する。"""
     ref = url_or_number.strip()
-    items = registry.list_issues(conn)
+    # 「直近の Issue」の判定に使うため id 順に並べ直す(list_issues は priority 順)
+    items = sorted(registry.list_issues(conn), key=lambda i: i.id)
     if re.fullmatch(r"\d+", ref):
         repos = sorted({i.repo for i in items})
         if len(repos) != 1:
@@ -169,20 +195,34 @@ def tool_propose_issue(
             "Web UI か CLI から登録すること"
         )
     note_text = f"、補足は「{note}」" if note else ""
-    state.pending = PendingAction(
-        kind="add_issue",
-        description=f"{url} を queued として登録{note_text}",
-        payload={"url": url, "workdir": workdir, "note": note},
-    )
-    return f"確認待ちにした: {state.pending.description}。ユーザーに復唱して確認を求めること"
+    with state.lock:
+        state.pending = PendingAction(
+            kind="add_issue",
+            description=f"{url} を queued として登録{note_text}",
+            payload={"url": url, "workdir": workdir, "note": note},
+            proposed_turn=state.turn,
+        )
+        description = state.pending.description
+    return f"確認待ちにした: {description}。ユーザーに復唱して確認を求めること"
 
 
 def tool_execute_pending(conn: iceql.Connection, state: AgentState) -> str:
-    """確認待ちの操作を実行する。ユーザーの肯定を得てから呼ぶこと。"""
-    pending = state.pending
-    if pending is None:
-        return "確認待ちの操作はない。先に propose すること"
-    state.pending = None
+    """確認待ちの操作を実行する。ユーザーの肯定を得てから呼ぶこと。
+
+    propose と同じ発話内での呼び出しは拒否する。これにより、発話や質問本文に
+    紛れた指示でエージェントが確認を飛ばそうとしても、ユーザーの発話
+    (肯定・否定)を一度はさまない限り実行できない。
+    """
+    with state.lock:
+        pending = state.pending
+        if pending is None:
+            return "確認待ちの操作はない。先に propose すること"
+        if pending.proposed_turn == state.turn:
+            return (
+                "propose と同じ発話内では実行できない。"
+                "内容を復唱してユーザーの確認を待つこと"
+            )
+        state.pending = None
     if pending.kind == "answer":
         p = pending.payload
         try:
@@ -205,10 +245,11 @@ def tool_execute_pending(conn: iceql.Connection, state: AgentState) -> str:
 
 def tool_cancel_pending(state: AgentState) -> str:
     """確認待ちの操作を取り消す。"""
-    if state.pending is None:
-        return "確認待ちの操作はない"
-    description = state.pending.description
-    state.pending = None
+    with state.lock:
+        if state.pending is None:
+            return "確認待ちの操作はない"
+        description = state.pending.description
+        state.pending = None
     return f"取り消した: {description}"
 
 
@@ -311,6 +352,7 @@ class VoiceAgent:
             mcp_servers={"alir_voice": server},
             allowed_tools=[f"mcp__alir_voice__{t.name}" for t in tools],
             tools=[],  # ファイル操作など組み込みツールは使わせない
+            setting_sources=[],  # 運用者の settings.json(hooks 含む)からも隔離する
             system_prompt=_SYSTEM_PROMPT,
             max_turns=_MAX_TURNS,
             cwd=str(self._dbdir),
@@ -328,30 +370,42 @@ class VoiceAgent:
         """
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
+        with self._state.lock:
+            self._state.turn += 1
         try:
             client = await self._ensure_client()
             prompt = f"[context] {context}\n{text}" if context else text
             await client.query(prompt)
             result_text = ""
+            error_result = False
             assistant_texts: list[str] = []
             async for message in client.receive_response():
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             assistant_texts.append(block.text)
-                elif isinstance(message, ResultMessage) and not message.is_error:
-                    result_text = message.result or ""
+                elif isinstance(message, ResultMessage):
+                    if message.is_error:
+                        error_result = True
+                    else:
+                        result_text = message.result or ""
         except Exception:
             await self.aclose()
             raise
+        if error_result:
+            # max_turns 到達などは例外にならず error の結果で返る。放置すると
+            # 以後の発話がすべて空応答になるため、セッションを立ち上げ直す
+            _log("voice: エージェントがエラーの結果を返したためセッションを仕切り直す")
+            await self.aclose()
+            return "セッションを仕切り直しました。もう一度お願いします"
         reply = result_text.strip() or (assistant_texts[-1].strip() if assistant_texts else "")
         return reply or "うまく応答できなかった。もう一度話しかけてほしい"
 
     async def aclose(self) -> None:
-        """セッションを閉じる。失敗しても呼び出し元には影響させない。"""
+        """セッションを閉じる。失敗・ハングしても呼び出し元には影響させない。"""
         client, self._client = self._client, None
         if client is not None:
             try:
-                await client.disconnect()
+                await asyncio.wait_for(client.disconnect(), timeout=_CLOSE_TIMEOUT)
             except Exception as exc:  # noqa: BLE001
                 _log(f"voice: エージェントの終了に失敗した: {exc}")

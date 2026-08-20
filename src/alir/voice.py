@@ -380,7 +380,9 @@ async def _deliver_event(conn: _Connection, event: events.Event) -> None:
         except Exception as exc:  # noqa: BLE001 - 合成失敗でも字幕は届ける
             _log(f"voice: 通知の合成に失敗した: {exc}")
     if event.kind == events.KIND_QUESTION and event.data.get("question_id") is not None:
-        # 「それ、B で進めて」のような指示語を意図解釈が解決できるようにする
+        # 「それ、B で進めて」のような指示語を意図解釈が解決できるようにする。
+        # 回答済みになっても消さない(最後に読み上げた質問という事実は変わらず、
+        # 処理済みかどうかはエージェント自身の会話文脈で分かる)
         conn.agent_context = (
             f"直前に読み上げた質問: #{event.data['question_id']}({event.data.get('issue', '')})"
         )
