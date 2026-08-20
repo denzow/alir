@@ -48,8 +48,16 @@ class FasterWhisperTranscriber:
                 self._model = WhisperModel(self._model_name, device="cpu", compute_type="int8")
                 _log("voice: whisper モデルのロード完了")
             audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+            # temperature を単一値にして自信がないときの再デコード(温度 fallback)を
+            # 無効にする。fallback は最悪ケースの認識時間を数倍にし、会話の間が持たない。
+            # 多少の誤認識は字幕と、後続フェーズの意図解釈・復唱確認で吸収する。
+            # without_timestamps でタイムスタンプトークンの生成も省く(区間は VAD が決めている)
             segments, _info = self._model.transcribe(
-                audio, language="ja", beam_size=self._beam_size
+                audio,
+                language="ja",
+                beam_size=self._beam_size,
+                temperature=0.0,
+                without_timestamps=True,
             )
             return "".join(segment.text for segment in segments)
 
