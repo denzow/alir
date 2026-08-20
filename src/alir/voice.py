@@ -23,7 +23,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -149,6 +149,14 @@ class Segmenter:
         return [SpeechSegment(audio=b"".join(chunks))]
 
 
+class Interpreter(Protocol):
+    """発話を alir の操作に変える意図解釈エージェント(実体は voice_agent.VoiceAgent)。"""
+
+    async def reply(self, text: str, *, context: str | None = None) -> str: ...
+
+    async def aclose(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class Engines:
     """音声パイプの構成要素。実体は voice_engines、テストはフェイクを注入する。
@@ -156,6 +164,8 @@ class Engines:
     VAD はチャンク単位の内部状態(RNN)を持つため、接続ごとに probe_factory で作る。
     transcriber と synthesizer は接続をまたいで共有される(必要なら実装側で直列化する)。
     summarizer はイベントを読み上げ文に変える。None なら event.message をそのまま読む。
+    interpreter_factory は接続ごとの意図解釈セッションを作る。None ならオウム返し
+    (Phase 1 の疎通確認モード)になる。
     """
 
     probe_factory: Callable[[], Callable[[bytes], float]]
@@ -164,6 +174,7 @@ class Engines:
     chunk_bytes: int = 1024
     segmenter_config: SegmenterConfig = field(default_factory=SegmenterConfig)
     summarizer: Callable[[events.Event], str] | None = None
+    interpreter_factory: Callable[[], Interpreter] | None = None
 
 
 # TTS 音声(WAV)を送るときの 1 フレームの大きさ
@@ -196,6 +207,9 @@ class _Connection:
         self.segments: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_SEGMENT_QUEUE_SIZE)
         self.events: asyncio.Queue[events.Event] = asyncio.Queue(maxsize=_EVENT_QUEUE_SIZE)
         self.segmenter: Segmenter | None = None
+        self.interpreter: Interpreter | None = None
+        # 直前に読み上げた質問など、指示語の解決に使う状況共有(意図解釈へ渡す)
+        self.agent_context: str | None = None
         self.stream_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         if engines is not None:
@@ -275,7 +289,11 @@ async def _segment_worker(conn: _Connection) -> None:
 
 
 async def _reply_segment(conn: _Connection, pcm: bytes) -> None:
-    """1 区間を STT → TTS して返送する。STT・TTS の失敗はログだけ残して区間を捨てる。"""
+    """1 区間を STT → 意図解釈 → TTS して返送する。各段の失敗はログだけ残す。
+
+    意図解釈(interpreter_factory)がなければ認識テキストをそのまま合成して返す
+    (Phase 1 の疎通確認モード)。
+    """
     engines = conn.engines
     assert engines is not None
     started = time.monotonic()
@@ -288,16 +306,31 @@ async def _reply_segment(conn: _Connection, pcm: bytes) -> None:
     if not text:
         return
     await conn.send_json({"type": "stt_final", "text": text})
+    reply_text = text
+    agent_note = ""
+    if engines.interpreter_factory is not None:
+        agent_started = time.monotonic()
+        if conn.interpreter is None:
+            conn.interpreter = engines.interpreter_factory()
+        try:
+            reply_text = await conn.interpreter.reply(text, context=conn.agent_context)
+        except Exception as exc:  # noqa: BLE001 - 解釈失敗は謝って続ける
+            _log(f"voice: 意図解釈に失敗した: {exc}")
+            reply_text = "すみません、指示の処理に失敗しました"
+        agent_note = f" 解釈 {int((time.monotonic() - agent_started) * 1000)}ms"
+        await conn.send_json({"type": "agent_reply", "text": reply_text})
     tts_started = time.monotonic()
     try:
-        wav = await asyncio.to_thread(engines.synthesizer, text)
-    except Exception as exc:  # noqa: BLE001 - 合成失敗でも字幕(stt_final)は届いている
+        wav = await asyncio.to_thread(engines.synthesizer, reply_text)
+    except Exception as exc:  # noqa: BLE001 - 合成失敗でも字幕は届いている
         _log(f"voice: TTS に失敗した: {exc}")
         return
     tts_ms = int((time.monotonic() - tts_started) * 1000)
     await conn.send_audio(wav)
     # 完了条件のレイテンシ計測(voice-plan.md)。区間長は 16kHz/16bit なので 32 バイト = 1ms
-    _log(f"voice: 区間 {len(pcm) // 32}ms を認識 {stt_ms}ms 合成 {tts_ms}ms 「{text}」")
+    _log(
+        f"voice: 区間 {len(pcm) // 32}ms を認識 {stt_ms}ms{agent_note} 合成 {tts_ms}ms 「{text}」"
+    )
 
 
 async def _event_worker(conn: _Connection) -> None:
@@ -346,6 +379,11 @@ async def _deliver_event(conn: _Connection, event: events.Event) -> None:
             wav = await asyncio.to_thread(engines.synthesizer, text)
         except Exception as exc:  # noqa: BLE001 - 合成失敗でも字幕は届ける
             _log(f"voice: 通知の合成に失敗した: {exc}")
+    if event.kind == events.KIND_QUESTION and event.data.get("question_id") is not None:
+        # 「それ、B で進めて」のような指示語を意図解釈が解決できるようにする
+        conn.agent_context = (
+            f"直前に読み上げた質問: #{event.data['question_id']}({event.data.get('issue', '')})"
+        )
     await conn.send_json({"type": "event", "kind": event.kind, "policy": policy, "text": text})
     if wav is not None:
         await conn.send_audio(wav)
@@ -430,3 +468,6 @@ async def voice_ws(ws: WebSocket) -> None:
         for worker in workers:
             with contextlib.suppress(asyncio.CancelledError):
                 await worker
+        if conn.interpreter is not None:
+            with contextlib.suppress(Exception):
+                await conn.interpreter.aclose()

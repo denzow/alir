@@ -121,6 +121,10 @@ function onMessage(e) {
     case "stt_final":
       log("🎤 " + frame.text);
       break;
+    case "agent_reply":
+      // 意図解釈エージェントの応答。読み上げ音声は後続の audio_start で届く
+      log("🤖 " + frame.text);
+      break;
     case "event":
       // driver イベントの通知。読み上げ音声(speak 時)は後続の audio_start で届く。
       // 発話への応答と区別できるよう、先にチャイムを鳴らす

@@ -168,6 +168,15 @@ def voice_available() -> tuple[bool, str]:
     return True, "installed"
 
 
+def agent_available() -> bool:
+    """意図解釈(claude-agent-sdk)が使えるかを返す。"""
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def build_engines(dbdir: Path) -> voice.Engines | None:
     """設定を読んで Engines を組み立てる。voice extra が未導入なら None。
 
@@ -187,10 +196,18 @@ def build_engines(dbdir: Path) -> voice.Engines | None:
     synthesizer = VoicevoxSynthesizer(
         settings.voicevox_url(conn), settings.voice_speaker(conn)
     )
+    interpreter_factory = None
+    if agent_available():
+        from alir import voice_agent
+
+        interpreter_factory = lambda: voice_agent.VoiceAgent(dbdir)  # noqa: E731
+    else:
+        _log("voice: claude-agent-sdk が未導入のため意図解釈を無効化(オウム返しで動く)")
     return voice.Engines(
         probe_factory=lambda: SileroVoiceActivityDetector(),
         transcriber=transcriber,
         synthesizer=synthesizer,
         chunk_bytes=SileroVoiceActivityDetector.chunk_bytes(),
         summarizer=lambda event: summarize_event(event, cwd=dbdir),
+        interpreter_factory=interpreter_factory,
     )

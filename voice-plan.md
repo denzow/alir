@@ -66,12 +66,12 @@
 
 ### Phase 3: 音声コマンド / 意図解釈(2〜3日)
 
-- [ ] 常駐エージェントの実装。`claude -p` の都度起動は起動オーバーヘッドが大きいため、Claude APIのtool use(またはAgent SDKの常駐セッション)で、alirの内部関数を直接ツールとして公開する
-  - ツール候補: `list_questions` / `answer_question` / `add_issue` / `list_issues` / `session_status`
-- [ ] 文脈保持: 直前に読み上げた質問IDをセッション状態に持ち、「それ、Bで進めて」の指示語を解決できるようにする
-- [ ] 確認フロー: `add_issue` や `answer_question` など状態を変える操作は、実行前に復唱(「Issue 45にBで回答します。いいですか?」)→「はい/OK」で確定。誤認識対策として必須
-- [ ] STT誤認識に備え、認識テキストをWS経由で画面にも表示(字幕)。目視で誤爆に気づける
-- [ ] 応答生成: エージェントの返答テキストをVOICEVOXで合成して返す(Phase 1の経路を流用)
+- [x] 常駐エージェントの実装。claude-agent-sdk の常駐セッション(ClaudeSDKClient)で、alirの内部関数をSDK MCPツールとして公開する。認証はclaude CLIと同じでAPIキー不要
+  - ツール: `list_questions` / `list_issues` / `session_status` / `propose_answer` / `propose_issue` / `execute_pending` / `cancel_pending`
+- [x] 文脈保持: 直前に読み上げた質問IDを接続状態に持ち、発話の [context] 行として渡して「それ、Bで進めて」の指示語を解決する
+- [x] 確認フロー: 状態を変える操作は propose → 復唱 → 肯定 → execute の2段ツールプロトコル。executeは直前にproposeした内容だけを実行するため、LLMの気まぐれで確認を飛ばせない構造
+- [x] STT誤認識に備え、認識テキスト(🎤)とエージェント応答(🤖)をWS経由で画面にも表示(字幕)
+- [x] 応答生成: エージェントの返答テキストをVOICEVOXで合成して返す(Phase 1の経路を流用)。意図解釈が使えない環境ではオウム返しに落ちる
 
 完了条件: 「Issue 45を積んで。変更はAPI層に限定で」→ `issues add --note` 相当が実行され、口頭で結果が返る。
 
