@@ -61,7 +61,9 @@ KEY_VOICE_BEAM_SIZE = "voice_beam_size"
 DEFAULT_VOICE_BEAM_SIZE = 2
 
 # voice の WS 接続に要求するトークン。未設定なら検証しない(Tailnet/LAN 内前提)。
-# 設定すると /voice/ws は ?token= の一致を要求する
+# 設定すると /voice/ws は ?token= の一致を要求する。ブラウザの WS はヘッダを
+# 付けられないためクエリ渡しで、アクセスログとブラウザ履歴にトークンが残る
+# トレードオフがある(漏れたら alir voice token set で再生成する)
 KEY_VOICE_TOKEN = "voice_token"
 
 # イベント種別ごとの voice の読み上げポリシー(JSON: {"question": "speak", ...})。

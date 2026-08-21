@@ -481,8 +481,11 @@ def voice_group(ctx: click.Context) -> None:
             return
         base = url.rstrip("/")
         ws_url = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
-        click.echo(f"page: {base}{voice.PAGE_PATH}")
-        click.echo(f"endpoint: {ws_url}{voice.WS_PATH}")
+        # トークン検証が有効なら、そのまま開ける URL を示す
+        token = settings.voice_token(db.connect(data_dir()))
+        query = f"?token={token}" if token else ""
+        click.echo(f"page: {base}{voice.PAGE_PATH}{query}")
+        click.echo(f"endpoint: {ws_url}{voice.WS_PATH}{query}")
 
 
 @voice_group.command("status")
@@ -501,6 +504,7 @@ def voice_status() -> None:
     click.echo(f"speaker: {settings.voice_speaker(conn)}")
     click.echo(f"whisper model: {settings.voice_whisper_model(conn)}")
     click.echo(f"beam size: {settings.voice_beam_size(conn)}")
+    click.echo(f"token auth: {'enabled' if settings.voice_token(conn) else 'disabled'}")
 
 
 @voice_group.command("voicevox-url")
@@ -600,9 +604,11 @@ def voice_token_set(token: str | None) -> None:
 
     if token is None:
         token = secrets.token_urlsafe(16)
+    if not token.strip():
+        raise click.ClickException("empty token (検証をやめるには clear を使う)")
     conn = db.connect(data_dir())
     settings.set_voice_token(conn, token)
-    click.echo(f"set: {token}")
+    click.echo(f"set: {token.strip()}")
 
 
 @voice_token_group.command("clear")

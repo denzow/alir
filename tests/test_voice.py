@@ -228,10 +228,16 @@ def test_hallucination_patterns_are_detected() -> None:
 
 def test_hallucinated_transcription_is_dropped(dbdir: Path) -> None:
     """幻聴の定型句は stt_final も応答も送らない。"""
+    synthesized: list[str] = []
+
+    def synthesizer(text: str) -> bytes:
+        synthesized.append(text)
+        return b"WAV"
+
     engines = Engines(
         probe_factory=lambda: fake_probe,
         transcriber=lambda pcm: "ご視聴ありがとうございました",
-        synthesizer=lambda text: b"WAV",
+        synthesizer=synthesizer,
         chunk_bytes=CHUNK,
         segmenter_config=CONFIG,
     )
@@ -244,6 +250,8 @@ def test_hallucinated_transcription_is_dropped(dbdir: Path) -> None:
         ws.send_bytes(b"\x00" * (CHUNK * 3))
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}  # stt_final が来ていない
+    # フィルタが TTS の前で効いている(ping/pong の順序に依存しない確認)
+    assert synthesized == []
 
 
 def test_ws_rejects_wrong_token(dbdir: Path) -> None:

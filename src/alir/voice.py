@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import secrets
 import time
 from collections import deque
 from collections.abc import Callable
@@ -194,11 +195,11 @@ _EVENT_QUEUE_SIZE = 16
 
 # Whisper が無音・雑音の区間で出しがちな幻聴の定型句。学習データ(動画字幕)由来の
 # 決まり文句なので、部分一致で認識結果ごと捨てる
+# 「コメント欄」のような Issue 操作の発話と衝突しうる語は入れない
 _HALLUCINATION_PATTERNS = (
     "ご視聴ありがとう",
     "ご清聴ありがとう",
     "チャンネル登録",
-    "コメント欄",
     "また次の動画",
 )
 
@@ -454,9 +455,12 @@ async def voice_ws(ws: WebSocket) -> None:
         expected = await asyncio.to_thread(
             lambda: settings.voice_token(db.connect(dbdir_path))
         )
-        if expected is not None and ws.query_params.get("token") != expected:
+        if expected is not None and not secrets.compare_digest(
+            ws.query_params.get("token") or "", expected
+        ):
             _log("voice: トークン不一致の WS 接続を拒否した")
-            await ws.close(code=1008)  # policy violation
+            # accept 前の close はハンドシェイク拒否(HTTP 403)になる
+            await ws.close(code=1008)
             return
     await ws.accept()
     conn = _Connection(ws, engines, dbdir)
