@@ -192,6 +192,21 @@ _SEGMENT_QUEUE_SIZE = 8
 # (Pushover 側の通知は別購読者なので失われない)
 _EVENT_QUEUE_SIZE = 16
 
+# Whisper が無音・雑音の区間で出しがちな幻聴の定型句。学習データ(動画字幕)由来の
+# 決まり文句なので、部分一致で認識結果ごと捨てる
+_HALLUCINATION_PATTERNS = (
+    "ご視聴ありがとう",
+    "ご清聴ありがとう",
+    "チャンネル登録",
+    "コメント欄",
+    "また次の動画",
+)
+
+
+def is_hallucination(text: str) -> bool:
+    """認識結果が Whisper の幻聴の定型句かを判定する。"""
+    return any(pattern in text for pattern in _HALLUCINATION_PATTERNS)
+
 
 class _Connection:
     """1 接続分の状態。送信は複数タスク(受信ループと 2 つのワーカ)から行うためロックで直列化する。
@@ -304,6 +319,9 @@ async def _reply_segment(conn: _Connection, pcm: bytes) -> None:
         return
     stt_ms = int((time.monotonic() - started) * 1000)
     if not text:
+        return
+    if is_hallucination(text):
+        _log(f"voice: 幻聴とみなして破棄した 「{text}」")
         return
     await conn.send_json({"type": "stt_final", "text": text})
     reply_text = text
@@ -427,9 +445,20 @@ async def voice_ws(ws: WebSocket) -> None:
     Engines が未設定(voice extra 未導入など)なら音声は捨て、イベントは
     チャイム・字幕として届ける。
     """
-    await ws.accept()
     engines: Engines | None = getattr(ws.app.state, "voice_engines", None)
     dbdir: Path | None = getattr(ws.app.state, "voice_dbdir", None)
+    if dbdir is not None:
+        # トークンが設定されていれば ?token= の一致を要求する(未設定なら検証しない)。
+        # 接続ごとに DB から読むので、設定変更は serve の再起動なしで効く
+        dbdir_path = dbdir
+        expected = await asyncio.to_thread(
+            lambda: settings.voice_token(db.connect(dbdir_path))
+        )
+        if expected is not None and ws.query_params.get("token") != expected:
+            _log("voice: トークン不一致の WS 接続を拒否した")
+            await ws.close(code=1008)  # policy violation
+            return
+    await ws.accept()
     conn = _Connection(ws, engines, dbdir)
     workers: list[asyncio.Task[None]] = []
     unsubscribe: Callable[[], None] | None = None

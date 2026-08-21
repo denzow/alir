@@ -423,3 +423,25 @@ def test_voice_notify_show_and_set(dbdir: Path) -> None:
     assert result.exit_code != 0
     result = runner.invoke(main, ["voice", "notify", "set", "question=loud"])
     assert result.exit_code != 0
+
+
+def test_voice_token_set_show_clear(dbdir: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["voice", "token"])
+    assert "not set" in result.output
+
+    result = runner.invoke(main, ["voice", "token", "set", "my-token"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "token"])
+    assert result.output.strip() == "my-token"
+
+    # 省略するとランダム生成する
+    result = runner.invoke(main, ["voice", "token", "set"])
+    assert result.exit_code == 0
+    generated = result.output.strip().removeprefix("set: ")
+    assert len(generated) >= 16
+
+    result = runner.invoke(main, ["voice", "token", "clear"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["voice", "token"])
+    assert "not set" in result.output

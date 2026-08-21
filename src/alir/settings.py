@@ -60,6 +60,10 @@ DEFAULT_VOICE_WHISPER_MODEL = "small"
 KEY_VOICE_BEAM_SIZE = "voice_beam_size"
 DEFAULT_VOICE_BEAM_SIZE = 2
 
+# voice の WS 接続に要求するトークン。未設定なら検証しない(Tailnet/LAN 内前提)。
+# 設定すると /voice/ws は ?token= の一致を要求する
+KEY_VOICE_TOKEN = "voice_token"
+
 # イベント種別ごとの voice の読み上げポリシー(JSON: {"question": "speak", ...})。
 # speak は要約を合成音声で読み上げ、chime はチャイムと字幕だけ、silent は何もしない
 KEY_VOICE_NOTIFY = "voice_notify_policies"
@@ -217,6 +221,16 @@ def set_voice_beam_size(conn: iceql.Connection, beam_size: int) -> None:
     if beam_size < 1:
         raise SettingsError("beam size must be >= 1")
     control.set_value(conn, KEY_VOICE_BEAM_SIZE, str(beam_size))
+
+
+def voice_token(conn: iceql.Connection) -> str | None:
+    """voice の WS 接続に要求するトークンを返す。未設定なら None(検証しない)。"""
+    return control.get_value(conn, KEY_VOICE_TOKEN) or None
+
+
+def set_voice_token(conn: iceql.Connection, token: str) -> None:
+    """WS 接続のトークンを設定する。空文字で検証を無効に戻す。"""
+    control.set_value(conn, KEY_VOICE_TOKEN, token.strip())
 
 
 def voice_notify(conn: iceql.Connection) -> dict[str, str]:

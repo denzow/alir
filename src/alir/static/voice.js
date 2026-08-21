@@ -5,8 +5,13 @@
 
 const SAMPLE_RATE = 16000;
 
+// トークン検証(alir voice token set)を使うときは /voice?token=... で開く。
+// ページの URL から WS 接続へ引き継ぐ
+const TOKEN = new URLSearchParams(location.search).get("token");
+
 const state = {
   calling: false,
+  muted: false,
   ws: null,
   reconnectTimer: null,
   audioCtx: null,      // マイク取り込み用(16kHz 固定)
@@ -22,6 +27,7 @@ const state = {
 
 const statusEl = document.getElementById("status");
 const callEl = document.getElementById("call");
+const muteEl = document.getElementById("mute");
 const transcriptEl = document.getElementById("transcript");
 
 function setStatus(text, active) {
@@ -60,7 +66,7 @@ async function openMicrophone() {
   const source = state.audioCtx.createMediaStreamSource(state.stream);
   const node = new AudioWorkletNode(state.audioCtx, "pcm-capture");
   node.port.onmessage = (e) => {
-    if (state.calling && state.ws && state.ws.readyState === WebSocket.OPEN) {
+    if (state.calling && !state.muted && state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(e.data);
     }
   };
@@ -76,12 +82,15 @@ function connect() {
   // 再接続タイマーと visibilitychange の両方から呼ばれるため、二重コネクトを防ぐ
   if (state.ws && state.ws.readyState !== WebSocket.CLOSED) return;
   const scheme = location.protocol === "https:" ? "wss://" : "ws://";
-  const ws = new WebSocket(scheme + location.host + "/voice/ws");
+  const query = TOKEN ? "?token=" + encodeURIComponent(TOKEN) : "";
+  const ws = new WebSocket(scheme + location.host + "/voice/ws" + query);
   ws.binaryType = "arraybuffer";
   state.ws = ws;
   ws.onopen = () => {
-    setStatus("通話中", true);
-    ws.send(JSON.stringify({ type: "start", sample_rate: SAMPLE_RATE }));
+    setStatus(state.muted ? "通話中(ミュート)" : "通話中", true);
+    if (!state.muted) {
+      ws.send(JSON.stringify({ type: "start", sample_rate: SAMPLE_RATE }));
+    }
   };
   ws.onmessage = onMessage;
   ws.onclose = () => {
@@ -245,6 +254,22 @@ async function startCall() {
   callEl.textContent = "通話終了";
   callEl.classList.add("calling");
   callEl.disabled = false;
+  muteEl.hidden = false;
+}
+
+// マイクだけを止めるトグル。接続と通知(チャイム・読み上げ)は生かしたまま、
+// 常時リスニングが不要な時間帯に使う
+function toggleMute() {
+  state.muted = !state.muted;
+  muteEl.textContent = state.muted ? "ミュート解除" : "ミュート";
+  muteEl.classList.toggle("muted", state.muted);
+  setStatus(state.muted ? "通話中(ミュート)" : "通話中", true);
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    // サーバ側の発話区間の切り出しも止め、途中状態を持ち越さない
+    state.ws.send(JSON.stringify(
+      state.muted ? { type: "stop" } : { type: "start", sample_rate: SAMPLE_RATE }
+    ));
+  }
 }
 
 function stopCall() {
@@ -269,6 +294,10 @@ function stopCall() {
   setStatus("未接続");
   callEl.textContent = "通話開始";
   callEl.classList.remove("calling");
+  state.muted = false;
+  muteEl.hidden = true;
+  muteEl.textContent = "ミュート";
+  muteEl.classList.remove("muted");
 }
 
 callEl.addEventListener("click", () => {
@@ -278,6 +307,8 @@ callEl.addEventListener("click", () => {
     startCall();
   }
 });
+
+muteEl.addEventListener("click", toggleMute);
 
 // 画面復帰時に wake lock と接続を取り直す(バックグラウンドで切れるため)
 document.addEventListener("visibilitychange", () => {

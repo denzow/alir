@@ -578,6 +578,40 @@ def voice_notify_set(assignments: tuple[str, ...]) -> None:
         click.echo(f"set: {kind}={policy}")
 
 
+@voice_group.group("token", invoke_without_command=True)
+@click.pass_context
+def voice_token_group(ctx: click.Context) -> None:
+    """WS 接続のトークン検証を操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        token = settings.voice_token(conn)
+        click.echo(token if token else "not set (検証しない)")
+
+
+@voice_token_group.command("set")
+@click.argument("token", required=False)
+def voice_token_set(token: str | None) -> None:
+    """トークンを設定する。省略するとランダムに生成する。
+
+    設定すると /voice/ws は ?token= の一致を要求する。通話画面は
+    /voice?token=... で開けばトークンを引き継ぐ。再起動は不要。
+    """
+    import secrets
+
+    if token is None:
+        token = secrets.token_urlsafe(16)
+    conn = db.connect(data_dir())
+    settings.set_voice_token(conn, token)
+    click.echo(f"set: {token}")
+
+
+@voice_token_group.command("clear")
+def voice_token_clear() -> None:
+    """トークンの検証をやめる(Tailnet/LAN 内前提に戻す)。"""
+    settings.set_voice_token(db.connect(data_dir()), "")
+    click.echo("cleared")
+
+
 @voice_group.command("beam-size")
 @click.argument("beam_size", type=int, required=False)
 def voice_beam_size_cmd(beam_size: int | None) -> None:
