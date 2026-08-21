@@ -493,6 +493,8 @@ def voice_status() -> None:
     conn = db.connect(data_dir())
     available, detail = voice_engines.voice_available()
     click.echo(f"voice extra: {'installed' if available else detail}")
+    agent = voice_engines.agent_available()
+    click.echo(f"agent: {'available' if agent else 'claude-agent-sdk 未導入(オウム返しで動く)'}")
     url = settings.voicevox_url(conn)
     version = voice_engines.voicevox_version(url)
     click.echo(f"voicevox: {url} ({'v' + version if version else 'unreachable'})")

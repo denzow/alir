@@ -26,6 +26,7 @@ voice = [
     "faster-whisper>=1.2.1",
     "pysilero-vad>=3.4.0",
     "numpy>=1.26",
+    "claude-agent-sdk>=0.2.143",
 ]
 
 [dependency-groups]

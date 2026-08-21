@@ -217,6 +217,110 @@ def test_oversized_input_frame_is_ignored(dbdir: Path) -> None:
         assert ws.receive_json() == {"type": "pong"}
 
 
+# --- 意図解釈(Phase 3) ---
+
+
+class FakeInterpreter:
+    """呼び出しを記録し、固定の応答を返す意図解釈のフェイク。"""
+
+    def __init__(self, reply_text: str = "了解です") -> None:
+        self.reply_text = reply_text
+        self.calls: list[tuple[str, str | None]] = []
+        self.closed = False
+
+    async def reply(self, text: str, *, context: str | None = None) -> str:
+        self.calls.append((text, context))
+        return self.reply_text
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+def make_agent_engines(interpreter: FakeInterpreter) -> Engines:
+    return Engines(
+        probe_factory=lambda: fake_probe,
+        transcriber=lambda pcm: "ステータスを教えて",
+        synthesizer=lambda text: b"WAV:" + text.encode(),
+        chunk_bytes=CHUNK,
+        segmenter_config=CONFIG,
+        interpreter_factory=lambda: interpreter,
+    )
+
+
+def _speak_segment(ws) -> None:  # type: ignore[no-untyped-def]
+    ws.send_bytes(b"\x01" * (CHUNK * 4))
+    assert ws.receive_json() == {"type": "interrupt"}
+    ws.send_bytes(b"\x00" * (CHUNK * 3))
+
+
+def test_speech_is_interpreted_and_reply_is_spoken(dbdir: Path) -> None:
+    """発話 → stt_final → agent_reply → 応答の合成音声、の一往復。"""
+    interpreter = FakeInterpreter("実行中はありません")
+    with (
+        TestClient(make_app(dbdir, make_agent_engines(interpreter))) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        _speak_segment(ws)
+        assert ws.receive_json() == {"type": "stt_final", "text": "ステータスを教えて"}
+        assert ws.receive_json() == {"type": "agent_reply", "text": "実行中はありません"}
+        assert ws.receive_json() == {"type": "audio_start"}
+        assert ws.receive_bytes() == b"WAV:" + "実行中はありません".encode()
+        assert ws.receive_json() == {"type": "audio_end"}
+    assert interpreter.calls == [("ステータスを教えて", None)]
+    assert interpreter.closed  # 切断でセッションが閉じられる
+
+
+def test_question_event_sets_context_for_interpreter(
+    dbdir: Path, quiet_push: None
+) -> None:
+    """質問の読み上げ後の発話には、その質問の文脈が渡る。"""
+    interpreter = FakeInterpreter()
+    engines = make_agent_engines(interpreter)
+    with (
+        TestClient(make_app(dbdir, engines)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+        events.bus.publish(
+            events.Event(
+                kind=events.KIND_QUESTION,
+                message="質問",
+                data={"question_id": 7, "issue": "denzow/alir#45"},
+            )
+        )
+        frame = ws.receive_json()
+        assert frame["type"] == "event"
+        assert ws.receive_json() == {"type": "audio_start"}
+        assert ws.receive_bytes()
+        assert ws.receive_json() == {"type": "audio_end"}
+        _speak_segment(ws)
+        assert ws.receive_json()["type"] == "stt_final"
+        assert ws.receive_json()["type"] == "agent_reply"
+    assert len(interpreter.calls) == 1
+    context = interpreter.calls[0][1]
+    assert context is not None
+    assert "#7" in context
+    assert "denzow/alir#45" in context
+
+
+def test_interpreter_failure_replies_with_apology(dbdir: Path) -> None:
+    class BrokenInterpreter(FakeInterpreter):
+        async def reply(self, text: str, *, context: str | None = None) -> str:
+            raise RuntimeError("agent down")
+
+    with (
+        TestClient(make_app(dbdir, make_agent_engines(BrokenInterpreter()))) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        _speak_segment(ws)
+        assert ws.receive_json()["type"] == "stt_final"
+        frame = ws.receive_json()
+        assert frame["type"] == "agent_reply"
+        assert "失敗" in frame["text"]
+        assert ws.receive_json() == {"type": "audio_start"}
+
+
 # --- driver イベントの読み上げ(Phase 2) ---
 
 
