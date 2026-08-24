@@ -243,13 +243,18 @@ def _resume_command(conn: Any, dbdir: Path, issue: Any) -> str | None:
     終了したセッションを人間が開いて中を見たり続きを指示したりするための
     補助表示。MCP ツールも使えるよう、ドライバが書いた mcp.json を渡す。
     worktree が既に消えていることもあるので目安に留める。
+    COMPOSE_PROJECT_NAME はドライバ実行時と同じ値を前置し、手動 resume した
+    セッションが compose を使ってもドライバが立てたスタックを掴めるようにする。
     """
     if issue.session_id is None:
         return None
     push = settings.push_branch(conn, issue.workdir)
     branch = issue.branch or push or ""
     path = driver.worktree_path(issue, branch, push=push is not None)
-    return f"cd {path} && claude --resume {issue.session_id} --mcp-config {dbdir / 'mcp.json'}"
+    return (
+        f"cd {path} && COMPOSE_PROJECT_NAME={driver.compose_project_name(path)} "
+        f"claude --resume {issue.session_id} --mcp-config {dbdir / 'mcp.json'}"
+    )
 
 
 def _history_context(conn: Any, dbdir: Path) -> dict[str, Any]:

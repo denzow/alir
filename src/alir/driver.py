@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -409,6 +410,24 @@ def write_mcp_config(dbdir: Path, *, mcp_url: str | None = None) -> Path:
     return path
 
 
+def compose_project_name(cwd: Path) -> str:
+    """worktree ごとに一意な docker compose のプロジェクト名を返す。
+
+    docker compose はプロジェクト名の既定値にディレクトリ名を使うため、
+    別リポジトリの同番 worktree(それぞれの issue-5 など)でコンテナ名や
+    ネットワークが衝突する。パス末尾 2 要素のスラッグにパス全体のハッシュを
+    付けて一意にする。環境変数はファイルの name: より優先されるので、
+    compose.yaml が名前を固定しているリポジトリの衝突もこれで避けられる。
+    名前は compose の制約(英小文字・数字・"-"・"_"、先頭は英数字)に合わせる。
+    """
+    # slug と digest を同じ解決済みパスから作り、相対パスやシンボリックリンク
+    # 経由で呼ばれても同じ worktree なら同じ名前になるようにする
+    resolved = cwd.resolve()
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:8]
+    slug = re.sub(r"[^a-z0-9]+", "-", "-".join(resolved.parts[-2:]).lower()).strip("-")
+    return f"{slug}-{digest}" if slug else f"alir-{digest}"
+
+
 def run_claude(
     *,
     prompt: str,
@@ -442,7 +461,12 @@ def run_claude(
         cmd += ["--model", model]
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
-    env = dict(os.environ, ALIR_DATA_DIR=str(dbdir))
+    env = dict(
+        os.environ,
+        ALIR_DATA_DIR=str(dbdir),
+        # セッションが docker compose を使っても worktree 間で衝突しないようにする
+        COMPOSE_PROJECT_NAME=compose_project_name(cwd),
+    )
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env, check=False)
     session_id: str | None = None
     run_usage: dict[str, Any] = {}
