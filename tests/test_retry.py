@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -121,7 +121,7 @@ def test_done_resets_retries(dbdir: Path) -> None:
 def test_non_failed_issues_untouched(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     issue = registry.add(conn, url=URL, workdir="/tmp/alir")
-    now = datetime.now(timezone.utc) + timedelta(hours=1)
+    now = datetime.now(UTC) + timedelta(hours=1)
     outcome = retry.process_failed(conn, limit=2, now=now, notifier=_notifier())
     assert outcome.requeued == []
     assert outcome.exhausted == []

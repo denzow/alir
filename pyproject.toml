@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "denzow", email = "denzow@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "iceql>=0.3.0",
@@ -43,13 +43,13 @@ build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 files = ["src/alir"]
 
@@ -59,7 +59,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # numpy 2.x の型スタブは Python 3.12 以降の type 文を使っており、
-# python_version = 3.10 の解析では読めないためスタブを追わない
+# python_version = 3.11 の解析では読めないためスタブを追わない
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true

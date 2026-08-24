@@ -17,7 +17,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -515,7 +515,7 @@ def process_issue(
     report_result を呼ばずに終了した場合は途中死とみなして 1 回だけ queued に戻し、
     それでも連続したら failed にする。
     """
-    started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    started_at = datetime.now(UTC).isoformat(timespec="seconds")
     conn = db.connect(dbdir)
     issue = registry.get(conn, iid)
     registry.set_status(conn, iid, registry.STATUS_RUNNING)
@@ -807,7 +807,7 @@ def run_loop(
                     # (閾値の変更で予約は破棄され、取り直す)
                     resume_at = usage.pause_until(probe_status, threshold=threshold)
                     if resume_at is not None:
-                        delay = (resume_at - datetime.now(timezone.utc)).total_seconds()
+                        delay = (resume_at - datetime.now(UTC)).total_seconds()
                         if delay > usage_check_ttl:
                             next_probe = time.monotonic() + delay
                             emit(f"usage check deferred until reset: {resume_at.isoformat()}")

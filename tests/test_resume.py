@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -34,7 +34,7 @@ def _ask(conn, timeout_action: str = "keep_parked"):  # type: ignore[no-untyped-
 def test_expire_timeouts_proceeds_with_recommended(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     q = _ask(conn, timeout_action="proceed_with_recommended")
-    future = datetime.now(timezone.utc) + timedelta(hours=13)
+    future = datetime.now(UTC) + timedelta(hours=13)
     expired = resume.expire_timeouts(conn, timeout=timedelta(hours=12), now=future)
     assert [e.id for e in expired] == [q.id]
     got = questions.get(conn, q.id)
@@ -45,7 +45,7 @@ def test_expire_timeouts_proceeds_with_recommended(dbdir: Path) -> None:
 def test_expire_timeouts_keeps_parked_questions_open(dbdir: Path) -> None:
     conn = db.connect(dbdir)
     q = _ask(conn, timeout_action="keep_parked")
-    future = datetime.now(timezone.utc) + timedelta(hours=100)
+    future = datetime.now(UTC) + timedelta(hours=100)
     assert resume.expire_timeouts(conn, timeout=timedelta(hours=12), now=future) == []
     assert questions.get(conn, q.id).status == questions.STATUS_OPEN
 
@@ -101,7 +101,7 @@ def test_requeue_after_expire(dbdir: Path) -> None:
     issue = registry.add(conn, url=URL, workdir="/tmp")
     registry.set_status(conn, issue.id, registry.STATUS_PARKED)
     _ask(conn, timeout_action="proceed_with_recommended")
-    future = datetime.now(timezone.utc) + timedelta(hours=13)
+    future = datetime.now(UTC) + timedelta(hours=13)
     resume.expire_timeouts(conn, timeout=timedelta(hours=12), now=future)
     requeued = resume.requeue_answered(conn)
     assert [i.id for i in requeued] == [issue.id]

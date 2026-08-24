@@ -13,7 +13,7 @@ import json
 import os
 import socket
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -408,7 +408,7 @@ async def sessions_index(request: Request) -> Response:
 
     def work() -> dict[str, Any]:
         conn = db.connect(dbdir)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sessions = []
         for issue in registry.list_issues(conn, status=registry.STATUS_RUNNING):
             started = datetime.fromisoformat(issue.updated_at)
@@ -812,7 +812,7 @@ def _usage_windows(raw: str | None) -> list[dict[str, Any]]:
     """
     if not raw:
         return []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     windows = []
     for row in json.loads(raw):
         resets = str(row[2]) if len(row) > 2 and row[2] else None

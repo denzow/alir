@@ -3,9 +3,8 @@
 # スキップする設計になっているため、test ジョブでは導入しない。
 # mypy は voice extra の型情報（claude_agent_sdk・numpy）を前提にローカルで
 # 運用されているため、lint ジョブだけ voice extra 込みで同期する。
-# onnxruntime が cp310 wheel を提供しておらず voice extra は 3.10 に入らないので、
 # lint はローカルの venv と同じ 3.13 で実行する（mypy の検査自体は
-# pyproject の python_version = "3.10" に従う）。
+# pyproject の python_version = "3.11" に従う）。
 name: CI
 
 on:
@@ -34,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7

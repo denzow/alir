@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import iceql
 
@@ -26,7 +26,7 @@ def expire_timeouts(
     期限切れにするのは timeout_action が proceed_with_recommended の質問だけで、
     推奨案が回答として記録される。keep_parked の質問は open のまま残す。
     """
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(UTC)
     expired = []
     for q in questions.list_questions(conn, status=questions.STATUS_OPEN):
         if q.timeout_action != "proceed_with_recommended":

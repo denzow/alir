@@ -7,7 +7,7 @@ reports テーブルに蓄積する。Issue ごとの最新の報告を Web UI �
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import iceql
 
@@ -39,7 +39,7 @@ class Report:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def add(

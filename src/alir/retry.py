@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import iceql
 
@@ -61,7 +61,7 @@ def process_failed(
     (通知済みの印は control テーブルに置き、手動再キューで消える)。
     failed になった時刻には updated_at を使う。
     """
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(UTC)
     requeued: list[Issue] = []
     exhausted: list[Issue] = []
     for issue in registry.list_issues(conn, status=registry.STATUS_FAILED):

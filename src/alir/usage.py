@@ -14,7 +14,7 @@ import re
 import subprocess
 import zoneinfo
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import iceql
@@ -160,7 +160,7 @@ def status_pause_reason(status: UsageStatus, *, threshold: float) -> str | None:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def record_run(

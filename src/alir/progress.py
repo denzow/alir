@@ -7,7 +7,7 @@ progress テーブルに蓄積し、sessions 画面で表示する。
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import iceql
 
@@ -31,7 +31,7 @@ class Progress:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def add(

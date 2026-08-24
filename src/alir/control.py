@@ -8,7 +8,7 @@ Web UI とドライバは別プロセスでも DB 経由で連携できる。
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import iceql
 
@@ -32,7 +32,7 @@ class Event:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def set_value(conn: iceql.Connection, key: str, value: str) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -445,7 +446,7 @@ def test_issue_card_shows_latest_report(client: TestClient, dbdir: Path, tmp_pat
 
 def test_localtime_filter_converts_utc_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
     import time as time_mod
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from alir.web import _localtime
 
@@ -453,7 +454,7 @@ def test_localtime_filter_converts_utc_to_local(monkeypatch: pytest.MonkeyPatch)
     time_mod.tzset()
     try:
         assert _localtime("2026-08-01T00:30:00+00:00") == "08-01 09:30"
-        assert _localtime(datetime(2026, 8, 1, 0, 30, tzinfo=timezone.utc)) == "08-01 09:30"
+        assert _localtime(datetime(2026, 8, 1, 0, 30, tzinfo=UTC)) == "08-01 09:30"
     finally:
         monkeypatch.undo()
         time_mod.tzset()
@@ -893,11 +894,11 @@ def test_loop_page_shows_usage_windows(client: TestClient, dbdir: Path) -> None:
 def test_loop_page_shows_usage_reset_remaining(client: TestClient, dbdir: Path) -> None:
     import json as json_mod
     import zoneinfo
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from alir import control
 
-    local = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)).astimezone(
+    local = (datetime.now(UTC) + timedelta(hours=3, minutes=30)).astimezone(
         zoneinfo.ZoneInfo("Asia/Tokyo")
     )
     month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
@@ -915,11 +916,11 @@ def test_loop_page_marks_stale_usage_as_reset(client: TestClient, dbdir: Path) -
     """リセット時刻を過ぎた古い使用率は残り時間ではなくリセット済みと表示する。"""
     import json as json_mod
     import zoneinfo
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from alir import control
 
-    local = (datetime.now(timezone.utc) - timedelta(hours=4)).astimezone(
+    local = (datetime.now(UTC) - timedelta(hours=4)).astimezone(
         zoneinfo.ZoneInfo("Asia/Tokyo")
     )
     month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][

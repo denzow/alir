@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 from alir import control, db, driver, registry, usage
@@ -51,9 +52,9 @@ def test_parse_usage_text_without_resets_keeps_percentage() -> None:
 
 def test_parse_reset_at() -> None:
     import zoneinfo
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
     tokyo = zoneinfo.ZoneInfo("Asia/Tokyo")
     assert usage.parse_reset_at("Aug 1, 9:30pm (Asia/Tokyo)", now=now) == datetime(
         2026, 8, 1, 21, 30, tzinfo=tokyo
@@ -66,18 +67,18 @@ def test_parse_reset_at() -> None:
 def test_parse_reset_at_keeps_stale_reset_in_current_year() -> None:
     """リセットを数時間過ぎた古いデータは過去のまま返す(翌年に繰り上げない)。"""
     import zoneinfo
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)  # JST では 8/16 9:00
+    now = datetime(2026, 8, 16, 0, 0, tzinfo=UTC)  # JST では 8/16 9:00
     at = usage.parse_reset_at("Aug 16, 5am (Asia/Tokyo)", now=now)
     assert at == datetime(2026, 8, 16, 5, 0, tzinfo=zoneinfo.ZoneInfo("Asia/Tokyo"))
     assert at < now
 
 
 def test_parse_reset_at_rolls_over_year() -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime(2026, 12, 31, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 12, 31, 12, 0, tzinfo=UTC)
     at = usage.parse_reset_at("Jan 2, 12am (Asia/Tokyo)", now=now)
     assert at is not None
     assert at.year == 2027
@@ -90,9 +91,9 @@ def test_parse_reset_at_unparseable_returns_none() -> None:
 
 def test_pause_until_returns_earliest_reset_of_exceeded_windows() -> None:
     import zoneinfo
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 30, 12, 0, tzinfo=UTC)
     status = usage.UsageStatus(
         windows=(
             usage.UsageWindow("session", 92.0, resets="Jul 30, 11pm (Asia/Tokyo)"),
@@ -125,13 +126,13 @@ def test_pause_until_none_when_exceeded_window_lacks_reset() -> None:
 def test_run_loop_defers_usage_check_until_reset(tmp_path: Path) -> None:
     """閾値超過中はリセット時刻まで使用率の確認を先送りする。"""
     import zoneinfo
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     dbdir = tmp_path / "data"
     conn = db.connect(dbdir)
     registry.add(conn, url=URL, workdir="/tmp")
 
-    local = (datetime.now(timezone.utc) + timedelta(hours=3)).astimezone(
+    local = (datetime.now(UTC) + timedelta(hours=3)).astimezone(
         zoneinfo.ZoneInfo("Asia/Tokyo")
     )
     month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][
