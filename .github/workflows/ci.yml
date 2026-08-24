@@ -1,6 +1,8 @@
 # CI: リントと型チェックとテストを実行する。
 # voice extra は重い依存（ctranslate2 など）を含み、テスト側が importorskip で
-# スキップする設計になっているため、CI では導入しない。
+# スキップする設計になっているため、test ジョブでは導入しない。
+# mypy は voice extra の型情報（claude_agent_sdk・numpy）を前提にローカルで
+# 運用されているため、lint ジョブだけ voice extra 込みで同期する。
 name: CI
 
 on:
@@ -18,7 +20,7 @@ jobs:
           python-version: "3.10"
           enable-cache: true
       - name: 依存を同期する
-        run: uv sync --locked
+        run: uv sync --locked --extra voice
       - name: ruff
         run: uv run ruff check .
       - name: mypy
