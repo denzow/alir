@@ -955,6 +955,40 @@ def test_run_claude_omits_model_flag_without_setting(
     assert "--model" not in captured["cmd"]
 
 
+def test_compose_project_name_is_unique_per_worktree(tmp_path: Path) -> None:
+    """同じディレクトリ名でもパスが違えば別のプロジェクト名になる。"""
+    import re
+
+    a = tmp_path / "repo-a-alir" / "issue-5"
+    b = tmp_path / "repo-b-alir" / "issue-5"
+    name_a = driver.compose_project_name(a)
+    name_b = driver.compose_project_name(b)
+    assert name_a != name_b
+    # 同じパスからは常に同じ名前が得られる(再開時に同じプロジェクトを掴む)
+    assert name_a == driver.compose_project_name(a)
+    # compose の制約: 英小文字・数字・"-"・"_"、先頭は英数字
+    for name in (name_a, name_b):
+        assert re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name), name
+
+
+def test_run_claude_sets_compose_project_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    captured: dict[str, dict[str, str]] = {}
+
+    def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    dbdir = tmp_path / "data"
+    dbdir.mkdir()
+    driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir)
+    assert captured["env"]["COMPOSE_PROJECT_NAME"] == driver.compose_project_name(tmp_path)
+
+
 def test_process_issue_passes_model_from_settings(dbdir: Path) -> None:
     """settings にモデルが設定されていれば runner に渡り、未設定なら渡らない。"""
     from alir import settings
