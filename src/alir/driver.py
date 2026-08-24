@@ -420,8 +420,11 @@ def compose_project_name(cwd: Path) -> str:
     compose.yaml が名前を固定しているリポジトリの衝突もこれで避けられる。
     名前は compose の制約(英小文字・数字・"-"・"_"、先頭は英数字)に合わせる。
     """
-    digest = hashlib.sha256(str(cwd.resolve()).encode("utf-8")).hexdigest()[:8]
-    slug = re.sub(r"[^a-z0-9]+", "-", "-".join(cwd.parts[-2:]).lower()).strip("-")
+    # slug と digest を同じ解決済みパスから作り、相対パスやシンボリックリンク
+    # 経由で呼ばれても同じ worktree なら同じ名前になるようにする
+    resolved = cwd.resolve()
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:8]
+    slug = re.sub(r"[^a-z0-9]+", "-", "-".join(resolved.parts[-2:]).lower()).strip("-")
     return f"{slug}-{digest}" if slug else f"alir-{digest}"
 
 

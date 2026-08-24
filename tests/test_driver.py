@@ -969,6 +969,12 @@ def test_compose_project_name_is_unique_per_worktree(tmp_path: Path) -> None:
     # compose の制約: 英小文字・数字・"-"・"_"、先頭は英数字
     for name in (name_a, name_b):
         assert re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name), name
+    # シンボリックリンク経由でも同じ worktree なら同じ名前になる
+    real = tmp_path / "repo-a-alir" / "issue-7"
+    real.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(real.parent)
+    assert driver.compose_project_name(link / "issue-7") == driver.compose_project_name(real)
 
 
 def test_run_claude_sets_compose_project_name(
@@ -983,9 +989,12 @@ def test_run_claude_sets_compose_project_name(
         return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
 
     monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    # 親プロセスの値は共有されて衝突の原因になるので、worktree ごとの値で上書きされる
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "parent-value")
     dbdir = tmp_path / "data"
     dbdir.mkdir()
     driver.run_claude(prompt="p", cwd=tmp_path, dbdir=dbdir)
+    assert captured["env"]["COMPOSE_PROJECT_NAME"] != "parent-value"
     assert captured["env"]["COMPOSE_PROJECT_NAME"] == driver.compose_project_name(tmp_path)
 
 
