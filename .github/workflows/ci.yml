@@ -1,0 +1,42 @@
+# CI: リントと型チェックとテストを実行する。
+# voice extra は重い依存（ctranslate2 など）を含み、テスト側が importorskip で
+# スキップする設計になっているため、CI では導入しない。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.10"
+          enable-cache: true
+      - name: 依存を同期する
+        run: uv sync --locked
+      - name: ruff
+        run: uv run ruff check .
+      - name: mypy
+        run: uv run mypy
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: 依存を同期する
+        run: uv sync --locked
+      - name: pytest
+        run: uv run pytest
