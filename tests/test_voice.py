@@ -217,6 +217,67 @@ def test_oversized_input_frame_is_ignored(dbdir: Path) -> None:
         assert ws.receive_json() == {"type": "pong"}
 
 
+# --- 運用改善(Phase 4) ---
+
+
+def test_hallucination_patterns_are_detected() -> None:
+    assert voice.is_hallucination("ご視聴ありがとうございました")
+    assert voice.is_hallucination("チャンネル登録お願いします")
+    assert not voice.is_hallucination("Issue 45 を積んで")
+
+
+def test_hallucinated_transcription_is_dropped(dbdir: Path) -> None:
+    """幻聴の定型句は stt_final も応答も送らない。"""
+    synthesized: list[str] = []
+
+    def synthesizer(text: str) -> bytes:
+        synthesized.append(text)
+        return b"WAV"
+
+    engines = Engines(
+        probe_factory=lambda: fake_probe,
+        transcriber=lambda pcm: "ご視聴ありがとうございました",
+        synthesizer=synthesizer,
+        chunk_bytes=CHUNK,
+        segmenter_config=CONFIG,
+    )
+    with (
+        TestClient(make_app(dbdir, engines)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_bytes(b"\x01" * (CHUNK * 4))
+        assert ws.receive_json() == {"type": "interrupt"}
+        ws.send_bytes(b"\x00" * (CHUNK * 3))
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}  # stt_final が来ていない
+    # フィルタが TTS の前で効いている(ping/pong の順序に依存しない確認)
+    assert synthesized == []
+
+
+def test_ws_rejects_wrong_token(dbdir: Path) -> None:
+    settings.set_voice_token(db.connect(dbdir), "secret-token")
+    app = make_app(dbdir, None)
+    with TestClient(app) as client:
+        with (
+            pytest.raises(Exception),  # noqa: B017 - 拒否の例外型はクライアント実装依存
+            client.websocket_connect(WS_PATH) as ws,
+        ):
+            ws.receive_json()
+        # 正しいトークンなら通る
+        with client.websocket_connect(f"{WS_PATH}?token=secret-token") as ws:
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+
+
+def test_ws_without_token_setting_accepts_all(dbdir: Path) -> None:
+    with (
+        TestClient(make_app(dbdir, None)) as client,
+        client.websocket_connect(WS_PATH) as ws,
+    ):
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json() == {"type": "pong"}
+
+
 # --- 意図解釈(Phase 3) ---
 
 

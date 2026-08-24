@@ -481,8 +481,11 @@ def voice_group(ctx: click.Context) -> None:
             return
         base = url.rstrip("/")
         ws_url = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
-        click.echo(f"page: {base}{voice.PAGE_PATH}")
-        click.echo(f"endpoint: {ws_url}{voice.WS_PATH}")
+        # トークン検証が有効なら、そのまま開ける URL を示す
+        token = settings.voice_token(db.connect(data_dir()))
+        query = f"?token={token}" if token else ""
+        click.echo(f"page: {base}{voice.PAGE_PATH}{query}")
+        click.echo(f"endpoint: {ws_url}{voice.WS_PATH}{query}")
 
 
 @voice_group.command("status")
@@ -501,6 +504,7 @@ def voice_status() -> None:
     click.echo(f"speaker: {settings.voice_speaker(conn)}")
     click.echo(f"whisper model: {settings.voice_whisper_model(conn)}")
     click.echo(f"beam size: {settings.voice_beam_size(conn)}")
+    click.echo(f"token auth: {'enabled' if settings.voice_token(conn) else 'disabled'}")
 
 
 @voice_group.command("voicevox-url")
@@ -576,6 +580,42 @@ def voice_notify_set(assignments: tuple[str, ...]) -> None:
         raise click.ClickException(str(exc)) from exc
     for kind, policy in sorted(updates.items()):
         click.echo(f"set: {kind}={policy}")
+
+
+@voice_group.group("token", invoke_without_command=True)
+@click.pass_context
+def voice_token_group(ctx: click.Context) -> None:
+    """WS 接続のトークン検証を操作する。サブコマンドなしなら現在値を表示する。"""
+    if ctx.invoked_subcommand is None:
+        conn = db.connect(data_dir())
+        token = settings.voice_token(conn)
+        click.echo(token if token else "not set (検証しない)")
+
+
+@voice_token_group.command("set")
+@click.argument("token", required=False)
+def voice_token_set(token: str | None) -> None:
+    """トークンを設定する。省略するとランダムに生成する。
+
+    設定すると /voice/ws は ?token= の一致を要求する。通話画面は
+    /voice?token=... で開けばトークンを引き継ぐ。再起動は不要。
+    """
+    import secrets
+
+    if token is None:
+        token = secrets.token_urlsafe(16)
+    if not token.strip():
+        raise click.ClickException("empty token (検証をやめるには clear を使う)")
+    conn = db.connect(data_dir())
+    settings.set_voice_token(conn, token)
+    click.echo(f"set: {token.strip()}")
+
+
+@voice_token_group.command("clear")
+def voice_token_clear() -> None:
+    """トークンの検証をやめる(Tailnet/LAN 内前提に戻す)。"""
+    settings.set_voice_token(db.connect(data_dir()), "")
+    click.echo("cleared")
 
 
 @voice_group.command("beam-size")
